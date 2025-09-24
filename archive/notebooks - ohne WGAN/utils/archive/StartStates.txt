@@ -1,0 +1,50 @@
+class StartStates:
+    def __init__(self, max_size=20, pred_count=1, prey_count=32, action_count=360):
+        self.buffer = deque(maxlen=max_size)
+        self.pred_count = pred_count
+        self.prey_count = prey_count
+        self.action_count = action_count
+
+    def add(self, env):
+        self.buffer.append(pickle.dumps(env))
+
+    def sample(self, batch_size):
+        pickle_env = random.sample(self.buffer, k=min(batch_size, len(self.buffer)))
+        return [pickle.loads(env) for env in pickle_env]
+
+    def clear(self):
+        self.buffer.clear()
+
+    def collect_start_states(self, pred_policy, prey_policy, beginn=100, interval=10, num_episodes=4):
+        for i in range(num_episodes):
+            env = parallel_env(predator_count=self.pred_count, prey_count=self.prey_count, action_count=self.action_count)
+            seed = np.random.randint(0, 1000)
+            env.reset(seed=seed)
+
+            total_frames = beginn + interval * self.buffer.maxlen
+
+            for frame in range(total_frames):
+                global_state = env.state().item()
+                pred_tensor, prey_tensor = get_features(global_state)
+
+                con_pred = pred_policy.forward_pred(pred_tensor[..., :4])
+                dis_pred = continuous_to_discrete(con_pred, self.action_count, role='predator')
+
+                con_prey = prey_policy.forward_prey(prey_tensor[..., :4])
+                dis_prey = continuous_to_discrete(con_prey, self.action_count, role='prey')
+
+                action_dict = {'predator_0': dis_pred}
+                for i, a in enumerate(sorted(a for a in env.agents if a.startswith('prey'))):
+                    action_dict[a] = dis_prey[i]
+
+                if frame >= beginn and (frame - beginn) % interval == 0:
+                    self.add(env)
+
+                env.step(action_dict)
+
+            try:
+                env.close()
+            except SystemExit:
+                pass
+            except Exception:
+                pass

@@ -1,0 +1,49 @@
+def parallel_get_rollouts(pred_count=1, prey_count=32, action_count=360, pred_policy=None, prey_policy=None, num_frames=9, beginn=300 seed=None):
+    
+    env = parallel_env(predator_count=pred_count, prey_count=prey_count, action_count=action_count)
+
+    env.reset(seed=seed)
+    
+    pred_tensors, prey_tensors = [], []
+    
+    for frame_idx in range(num_frames):
+
+        global_state = env.state().item()
+        pred_tensor, prey_tensor = get_features(global_state)
+
+
+        # PREDATOR
+        pred_states = pred_tensor[..., :4]
+        con_pred = pred_policy.forward_pred(pred_states)
+        dis_pred = continuous_to_discrete(con_pred, 360, role='predator')
+
+        agents, neigh, _ = pred_states.shape
+        pred_action = torch.full((agents, neigh, 1), con_pred.item())
+        pred_tensors.append(torch.cat([pred_states, pred_action], dim=2))
+
+
+        # PREY
+        prey_states = prey_tensor[..., :4]
+        con_prey = prey_policy.forward_prey(prey_states)
+        dis_prey = continuous_to_discrete(con_prey, 360, role='prey')
+
+        agents, neigh, _ = prey_states.shape
+        con_prey_tensor = con_prey.detach().clone()
+        prey_action = con_prey_tensor.view(agents, 1, 1).expand(agents, neigh, 1)
+        prey_tensors.append(torch.cat([prey_states, prey_action], dim=2))
+
+        action_dict = {'predator_0': dis_pred}
+        for i, agent_name in enumerate(sorted([agent for agent in env.agents if agent.startswith("prey")])):
+            action_dict[agent_name] = dis_prey[i]
+
+        env.step(action_dict)
+
+    pred_tensor = torch.stack(pred_tensors, dim=0)
+    prey_tensor = torch.stack(prey_tensors, dim=0).squeeze(1)
+
+    try:
+        env.close()
+    except:
+        pass
+
+    return pred_tensor.float(), prey_tensor.float()

@@ -35,7 +35,7 @@ def process_frame(cap, model, tracker, frame_idx):
         x = float(np.clip(x_raw, 0, width))
         y = float(np.clip(y_raw, 0, height))
 
-        records.append({"frame":    int(frame_idx-1),
+        records.append({"frame":    int(frame_idx),
                         "track_id": int(track.track_id),
                         "label":    str(track.det_class),
                         "conf":     track.det_conf,
@@ -51,7 +51,7 @@ def process_frame(cap, model, tracker, frame_idx):
 
 def filter_frames(total_frames):
     # Use only necessary detections of Pred Head and Prey
-    pred_prey_frames = [frame for frame in total_frames if frame['label'] in ('0', '2')] #auf Pred Head 1 anpassen
+    pred_prey_frames = [frame for frame in total_frames if frame['label'] in ('1', '2')] #Pred Head 1, Prey 2
 
     # Filter detections with None confidence
     filtered_conf = [frame for frame in pred_prey_frames if frame['conf'] is not None]
@@ -62,7 +62,7 @@ def filter_frames(total_frames):
 
     for data in filtered_conf:
         frame = data['frame']
-        if data['label'] == '0': #auf Pred Head 1 anpassen
+        if data['label'] == '1': #Pred Head 1, Prey 2
             if frame not in best_pred_label or data['conf'] > best_pred_label[frame]['conf']:
                 best_pred_label[frame] = data
         else:
@@ -109,8 +109,8 @@ def find_valid_windows(filtered_frames, num_frames=9, total_detections=33):
     return full_track_windows, valid_windows
 
 
-def get_expert_features(frame, width, height, max_speed):    
-    frame = sorted(frame, key=lambda det: det['label'] != '0') # sort so that Pred is always first
+def get_expert_features(frame, width, height, max_speed=25):    
+    frame = sorted(frame, key=lambda det: det['label'] != '1') # sort so that Pred Head is always first
 
     vscale = np.vectorize(scale)
 
@@ -159,7 +159,7 @@ def get_expert_features(frame, width, height, max_speed):
     return pred_tensor, prey_tensor
 
 
-def get_expert_tensors(full_track_windows, valid_windows, width, height, max_speed, window_size=9):
+def get_expert_tensors(full_track_windows, valid_windows, width, height, max_speed=25, window_size=9):
     if len(valid_windows) == 0:
         return torch.empty(0), torch.empty(0)
     
@@ -187,4 +187,105 @@ def get_expert_tensors(full_track_windows, valid_windows, width, height, max_spe
         pred_tensor = torch.stack(pred_windows, dim=0)
         prey_tensor = torch.stack(prey_windows, dim=0)
 
-        return pred_tensor, prey_tensor
+        total, n_clips, agent, neigh, feat = pred_tensor.shape
+        pred_tensors = pred_tensor.reshape(total * n_clips, agent, neigh, feat)
+
+        total, n_clips, agent, neigh, feat = prey_tensor.shape
+        prey_tensors = prey_tensor.reshape(total * n_clips, agent, neigh, feat)
+
+        return pred_tensors, prey_tensors
+    
+
+
+# WITH VELOCITY FEATURE
+def get_expert_features_velo(frame, width, height, max_speed=25):    
+    frame = sorted(frame, key=lambda det: det['label'] != '1') # sort so that Pred Head is always first
+
+    vscale = np.vectorize(scale)
+
+    xs = np.array([det['x'] for det in frame])
+    ys = np.array([det['y'] for det in frame])
+
+    clipped_xs = np.clip(xs, 0, width)
+    clipped_ys = np.clip(ys, 0, height)
+
+    scaled_xs = vscale(clipped_xs, 0, width, 0, 1)
+    scaled_ys = vscale(clipped_ys, 0, height, 0, 1)
+
+    vxs = np.array([det['vx'] for det in frame])
+    vys = np.array([det['vy'] for det in frame])
+
+    thetas = np.array([det['angle'] for det in frame])
+    scaled_thetas = vscale(thetas, -np.pi, np.pi, -1, 1)
+
+    cos_t = np.cos(thetas)                        
+    sin_t = np.sin(thetas)
+
+    speeds = np.array([det['speed'] for det in frame])
+    clipped_speeds = np.clip(speeds, 0, max_speed)
+    scaled_speeds = vscale(clipped_speeds, 0, max_speed, 0, 1)
+
+    # pairwise distances
+    dx = scaled_xs[None, :] - scaled_xs[:, None]
+    dy = scaled_ys[None, :] - scaled_ys[:, None]
+
+    # relative velocities
+    rel_vx = cos_t[:, None] * vxs[None, :] + sin_t[:, None] * vys[None, :]
+    rel_vy = -sin_t[:, None] * vxs[None, :] + cos_t[:, None] * vys[None, :]
+
+    clipped_vx = np.clip(rel_vx, -max_speed, max_speed)
+    clipped_vy = np.clip(rel_vy, -max_speed, max_speed)
+
+    scaled_rel_vx = vscale(clipped_vx, -max_speed, max_speed, -1, 1)
+    scaled_rel_vy = vscale(clipped_vy, -max_speed, max_speed, -1, 1)
+
+    n = scaled_xs.shape[0]
+    thetas_mat = np.tile(scaled_thetas[:, None], (1, n))
+    speeds_mat = np.tile(scaled_speeds[:, None], (1, n))
+
+    features = np.stack([dx, dy, scaled_rel_vx, scaled_rel_vy, thetas_mat, speeds_mat], axis=-1)  # (n, n, 6)
+
+    mask = ~np.eye(n, dtype=bool) # shape (N, N)
+    neigh = features[mask].reshape(n, n-1, 6)
+
+    pred_tensor = torch.from_numpy(neigh[0]).unsqueeze(0)
+    prey_tensor = torch.from_numpy(neigh[1:]) # shape (N-1, N-1, 5)
+
+    return pred_tensor, prey_tensor
+
+
+def get_expert_tensors_velo(full_track_windows, valid_windows, width, height, max_speed=25, window_size=9):
+    if len(valid_windows) == 0:
+        return torch.empty(0), torch.empty(0)
+    
+    else:
+        start_frames = [vw['start_frame'] for vw in valid_windows]
+        pred_windows = []
+        prey_windows = []
+
+        for idx, start in enumerate(start_frames):
+            window_detections = []
+            for frame in range(start, start + window_size):
+                dets = [det for det in full_track_windows[idx] if det['frame'] == frame]
+                window_detections.append(dets)
+
+            preds = []
+            preys = []
+            for dets in window_detections:
+                pred_tensor, prey_tensor = get_expert_features_velo(dets, width, height, max_speed)
+                preds.append(pred_tensor)
+                preys.append(prey_tensor)
+
+            pred_windows.append(torch.stack(preds, dim=0))
+            prey_windows.append(torch.stack(preys, dim=0))
+
+        pred_tensor = torch.stack(pred_windows, dim=0)
+        prey_tensor = torch.stack(prey_windows, dim=0)
+
+        total, n_clips, agent, neigh, feat = pred_tensor.shape
+        pred_tensors = pred_tensor.reshape(total * n_clips, agent, neigh, feat)
+
+        total, n_clips, agent, neigh, feat = prey_tensor.shape
+        prey_tensors = prey_tensor.reshape(total * n_clips, agent, neigh, feat)
+
+        return pred_tensors, prey_tensors

@@ -14,16 +14,14 @@ def get_features(global_state):
 
     n = len(raw)
 
-    xs = np.fromiter((r[1] for r in raw), dtype=np.float32, count=n)
-    ys = np.fromiter((r[2] for r in raw), dtype=np.float32, count=n)
-    directions = np.fromiter((r[3] for r in raw), dtype=np.float32, count=n)
-    speeds = np.fromiter((r[4] for r in raw), dtype=np.float32, count=n)
+    xs = np.fromiter((r[1] for r in raw), dtype=np.float32, count=n) # [0, width]
+    ys = np.fromiter((r[2] for r in raw), dtype=np.float32, count=n) # [0, height]
+    directions = np.fromiter((r[3] for r in raw), dtype=np.float32, count=n) # [-180, 180]
+    speeds = np.fromiter((r[4] for r in raw), dtype=np.float32, count=n) # [0, max_speed]
     
-    angle = directions * 360 - 180  # convert to [-180,180]
-    thetas = np.deg2rad(angle)  # convert to [-pi,pi]
+    thetas = (directions - 0.5) * (2 * np.pi)     # [-pi, pi]
     thetas_norm = thetas / np.pi # convert to [-1,1]
 
-    thetas = np.deg2rad(directions) # radians
     cos_t = np.cos(thetas)                        
     sin_t = np.sin(thetas)
     vxs = cos_t * speeds                       
@@ -50,6 +48,7 @@ def get_features(global_state):
     return pred_tensor, prey_tensor
 
 
+
 def continuous_to_discrete(actions, action_count, role="predator"):
     low, high = -math.pi, math.pi
     scaled = (actions - low) * (action_count - 1) / (high - low)
@@ -70,6 +69,8 @@ def parallel_get_rollouts(env, pred_count=1, prey_count=32, action_count=360, pr
 
         global_state = env.state().item()
         pred_tensor, prey_tensor = get_features(global_state)
+        pred_tensors.append(pred_tensor)
+        prey_tensors.append(prey_tensor)
 
         pred_states = pred_tensor[..., :4]
         con_pred = pred_policy.forward_pred(pred_states)
@@ -78,17 +79,6 @@ def parallel_get_rollouts(env, pred_count=1, prey_count=32, action_count=360, pr
         prey_states = prey_tensor[..., :4]
         con_prey = prey_policy.forward_prey(prey_states)
         dis_prey = continuous_to_discrete(con_prey, 360, role='prey')
-
-
-        agents, neigh, _ = pred_states.shape
-        pred_action = torch.full((agents, neigh, 1), con_pred.item())
-        pred_tensors.append(torch.cat([pred_states, pred_action], dim=2))
-
-        agents, neigh, _ = prey_states.shape
-        con_prey_tensor = con_prey.detach().clone()
-        prey_action = con_prey_tensor.view(agents, 1, 1).expand(agents, neigh, 1)
-        prey_tensors.append(torch.cat([prey_states, prey_action], dim=2))
-
 
         action_dict = {}
         for agent in env.agents:
@@ -142,5 +132,118 @@ def generate_trajectories(buffer, start_frame_pool, pred_count, prey_count, acti
     missing = num_generative_episodes - successful
     if missing > 0:
         generate_trajectories(buffer, pred_count, prey_count, action_count,
+                            pred_policy, prey_policy,
+                            clip_length, num_generative_episodes=missing)
+        
+
+
+# WITH VELOCITY
+
+def get_features_velo(global_state):
+    sorted_gs = dict(sorted(global_state.items()))
+    items = list(sorted_gs.items())
+    agents, raw = zip(*items)
+
+    n = len(raw)
+
+    xs = np.fromiter((r[1] for r in raw), dtype=np.float32, count=n) # [0, width]
+    ys = np.fromiter((r[2] for r in raw), dtype=np.float32, count=n) # [0, height]
+    directions = np.fromiter((r[3] for r in raw), dtype=np.float32, count=n) # [-180, 180]
+    speeds = np.fromiter((r[4] for r in raw), dtype=np.float32, count=n) # [0, max_speed]
+    
+    thetas = (directions - 0.5) * (2 * np.pi)     # [-pi, pi]
+    thetas_norm = thetas / np.pi # convert to [-1,1]
+
+    cos_t = np.cos(thetas)                        
+    sin_t = np.sin(thetas)
+    vxs = cos_t * speeds                       
+    vys = sin_t * speeds
+
+    # pairwise distances
+    dx = xs[None, :] - xs[:, None] # range [-1,1]
+    dy = ys[None, :] - ys[:, None] # range [-1,1]
+
+    # relative velocities
+    rel_vx = cos_t[:, None] * vxs[None, :] + sin_t[:, None] * vys[None, :] # range [-1,1]
+    rel_vy = -sin_t[:, None] * vxs[None, :] + cos_t[:, None] * vys[None, :] # range [-1,1]
+    
+    n = xs.shape[0]
+    thetas_mat = np.tile(thetas_norm[:, None], (1, n))
+    speeds_mat = np.tile(speeds[:, None], (1, n))
+    features = np.stack([dx, dy, rel_vx, rel_vy, thetas_mat, speeds_mat], axis=-1)
+
+    mask = ~np.eye(n, dtype=bool) # shape (N, N)
+    neigh = features[mask].reshape(n, n-1, 6)
+
+    pred_tensor = torch.from_numpy(neigh[0]).unsqueeze(0)
+    prey_tensor = torch.from_numpy(neigh[1:]) 
+    
+    return pred_tensor, prey_tensor
+
+
+
+def parallel_get_rollouts_velo(env, pred_count=1, prey_count=32, action_count=360, pred_policy=None, prey_policy=None, clip_length=30):
+    
+    pred_tensors, prey_tensors = [], []
+    
+    for frame_idx in range(clip_length):
+
+        global_state = env.state().item()
+        pred_tensor, prey_tensor = get_features_velo(global_state)
+        pred_tensors.append(pred_tensor)
+        prey_tensors.append(prey_tensor)
+
+        pred_states = pred_tensor[..., :4]
+        con_pred = pred_policy.forward_pred(pred_states)
+        dis_pred = continuous_to_discrete(con_pred, 360, role='predator')
+
+        prey_states = prey_tensor[..., :4]
+        con_prey = prey_policy.forward_prey(prey_states)
+        dis_prey = continuous_to_discrete(con_prey, 360, role='prey')
+
+        action_dict = {}
+        for agent in env.agents:
+            if agent.startswith("prey"):
+                idx = int(agent.split("_")[1])
+                action_dict[agent] = dis_prey[idx]
+            elif agent == "predator_0":
+                action_dict[agent] = dis_pred
+
+        env.step(action_dict)
+
+    pred_tensor = torch.stack(pred_tensors, dim=0)
+    prey_tensor = torch.stack(prey_tensors, dim=0).squeeze(1)
+
+    return pred_tensor.float(), prey_tensor.float()
+
+
+def generate_trajectories_velo(buffer, start_frame_pool, pred_count, prey_count, action_count, pred_policy, prey_policy, clip_length=100, num_generative_episodes=1, use_walls=True):
+
+    with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+        futures = [
+            executor.submit(
+                parallel_get_rollouts_velo,
+                make_env(predator_count=pred_count, prey_count=prey_count, action_count=action_count, use_walls=use_walls, start_frame_pool=start_frame_pool),
+                pred_count,
+                prey_count,
+                action_count,
+                pred_policy,
+                prey_policy,
+                clip_length
+            )
+            for i in range(num_generative_episodes)
+        ]
+
+    successful = 0
+    for future in as_completed(futures):
+        try:
+            pred_tensor, prey_tensor = future.result()
+            buffer.add_generative(pred_tensor, prey_tensor)
+            successful += 1
+        except KeyError:
+            continue
+    missing = num_generative_episodes - successful
+    if missing > 0:
+        generate_trajectories_velo(buffer, pred_count, prey_count, action_count,
                             pred_policy, prey_policy,
                             clip_length, num_generative_episodes=missing)

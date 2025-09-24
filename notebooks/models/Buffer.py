@@ -13,46 +13,6 @@ class Buffer:
         self.prey_buffer = deque(maxlen=prey_max_length)
         self.device = torch.device(device)
 
-
-    def add_expert_old2(self, path, window_size, detections):
-        pred_file = os.path.join(path, f"pred_tensors_{window_size}_{detections}.pkl")
-        with open(pred_file, "rb") as f:
-            pred_list = pickle.load(f)
-
-        for single_tensor in pred_list:
-            flat = single_tensor.squeeze(1)
-            for clip in flat:
-                self.pred_buffer.append(clip.to(self.device).float())
-
-        prey_file = os.path.join(path, f"prey_tensors_{window_size}_{detections}.pkl")
-        with open(prey_file, "rb") as f:
-            prey_list = pickle.load(f)
-
-        for single_tensor in prey_list:
-            n_clips, agent, neigh, feat = single_tensor.shape
-            flat = single_tensor.reshape(n_clips * agent, neigh, feat)
-            for clip in flat:
-                self.prey_buffer.append(clip.to(self.device).float())
-
-
-    def add_expert_old(self, path):
-        for file in os.listdir(path):
-            if file.startswith("pred"):
-                pred_list = torch.load(os.path.join(path, file), weights_only=False)
-
-                for single in pred_list:
-                    flat = single.squeeze(1)
-                    for clip in flat:
-                        self.pred_buffer.append(clip.to(self.device).float())
-
-            elif file.startswith("prey"):
-                prey_tensor = torch.load(os.path.join(path, file), weights_only=False)
-
-                n_clips, agent, neigh, feat = prey_tensor.shape
-                flat = prey_tensor.reshape(n_clips * agent, neigh, feat)
-                for single_tensor in flat:
-                    self.prey_buffer.append(single_tensor.to(self.device).float())
-
     def add_expert(self, path):
         for file in os.listdir(path):
             if file.startswith("pred"):
@@ -154,9 +114,23 @@ class Buffer:
             torch.save(self.prey_buffer, prey_path)
             
 
-    def clear(self):
-        self.pred_buffer.clear()
-        self.prey_buffer.clear()
+    def clear(self, p=None):
+        if p is None:
+            self.pred_buffer.clear()
+            self.prey_buffer.clear()
+        else:
+            pred_remove = int(len(self.pred_buffer) * (p / 100.0))
+            prey_remove = int(len(self.prey_buffer) * (p / 100.0))
+
+            pred_idx = set(random.sample(range(len(self.pred_buffer)), pred_remove)) if pred_remove > 0 else set()
+            prey_idx = set(random.sample(range(len(self.prey_buffer)), prey_remove)) if prey_remove > 0 else set()
+
+            new_pred = deque([x for i, x in enumerate(self.pred_buffer) if i not in pred_idx], maxlen=self.pred_buffer.maxlen)
+            new_prey = deque([x for i, x in enumerate(self.prey_buffer) if i not in prey_idx], maxlen=self.prey_buffer.maxlen)
+
+            # Buffers überschreiben
+            self.pred_buffer = new_pred
+            self.prey_buffer = new_prey
 
 
 class Pool:
