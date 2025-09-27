@@ -123,7 +123,7 @@ def mean_pairwise_distance(dx, dy):
 
 
 
-def run_policies(env, pred_policy, prey_policy): 
+def run_policies(env, pred_policy, prey_policy, prey_features=4): 
     print("Press 'q' to end simulation.")
 
     metrics = []
@@ -139,7 +139,7 @@ def run_policies(env, pred_policy, prey_policy):
         con_pred = pred_policy.forward_pred(pred_states)
         dis_pred = continuous_to_discrete(con_pred, 360, role='predator')
 
-        prey_states = prey_tensor[..., :4]
+        prey_states = prey_tensor[..., :prey_features]
         con_prey = prey_policy.forward_prey(prey_states)
         dis_prey = continuous_to_discrete(con_prey, 360, role='prey')
 
