@@ -79,50 +79,9 @@ class GeneratorPolicy(nn.Module):
         self.attention = Attention(features)
         
 
-    '''def forward_prey(self, states):
-        states = states.float()
-        agent, neigh, feat = states.shape
-
-        # --- PREY ---
-        prey_states = states[:, 1:, :]                       # (A, N_prey, F)
-        n_prey = prey_states.size(1)
-        prey_flat = prey_states.reshape(agent * n_prey, feat)  # (A*N_prey, F)
-
-        # Pairwise für Prey
-        mu_prey, sigma_prey = self.pairwise(prey_flat)       # (A*N_prey, 1) jeweils
-        dist_prey = Normal(mu_prey, sigma_prey)
-        raw_prey = dist_prey.rsample()
-        a_prey_flat = torch.tanh(raw_prey) * math.pi         # (A*N_prey, 1)
-        a_prey = a_prey_flat.view(agent, n_prey)             # (A, N_prey)
-
-        # --- PREDATOR ---
-        pred_states = states[:, 0, :]                        # (A, F)
-        pred_flat = pred_states.reshape(agent, feat)
-
-        # Pairwise für Predator
-        mu_pred, sigma_pred = self.pairwise(pred_flat)       # (A, 1)
-        dist_pred = Normal(mu_pred, sigma_pred)
-        raw_pred = dist_pred.rsample()
-        a_pred = (torch.tanh(raw_pred) * math.pi).view(agent)  # (A,)
-
-        # --- Attention-Gewichte (nutzt die tiefe Attention.forward) ---
-        # Gibt (A*N_prey,1) und (A,1) zurück
-        w_prey_flat, w_pred_flat = self.attention(prey_flat, pred_flat, role="prey")
-        w_prey = w_prey_flat.view(agent, n_prey)             # (A, N_prey)
-        w_pred = w_pred_flat.view(agent, 1)                  # (A, 1)
-
-        # --- Kombination ---
-        logits = torch.cat([w_pred, w_prey], dim=1)          # (A, 1+N_prey)
-        weights = F.softmax(logits, dim=1)                   # (A, 1+N_prey)
-        w_pred_col = weights[:, 0]                           # (A,)
-        w_prey_mat = weights[:, 1:]                          # (A, N_prey)
-
-        action_prey = (a_prey * w_prey_mat).sum(dim=1) + a_pred * w_pred_col  # (A,)
-        return action_prey'''
-
     def forward_prey(self, states):
         states = states.float()
-        agent, neigh, feat = states.shape
+        agent, neigh, feat = states.shape # 32,32,5
 
         # --- PREY ---
         prey_states = states[:, 1:, :]                          # (A, N_prey, F)
@@ -158,34 +117,28 @@ class GeneratorPolicy(nn.Module):
         w_prey_mat = weights[:, 1:]                             # (A, N_prey)
 
         action_prey = (a_prey * w_prey_mat).sum(dim=1) + a_pred * w_pred_col  # (A,)
-        return action_prey
+        return action_prey, mu_pred, sigma_pred, weights
 
 
 
     def forward_pred(self, states):
         states = states.float()
-        agent, neigh, feat = states.shape
-        states_flat = states.reshape(agent * neigh, feat)
+        agent, neigh, feat = states.shape # 1,32,4
+        states_flat = states.reshape(agent * neigh, feat) #32,4
 
-        # Pairwise
-        mu, sigma = self.pairwise(states_flat)               # (A*N,1)
+        # Pairwise Distribution
+        mu, sigma = self.pairwise(states_flat)               # mu=32, simga=32
         dist = Normal(mu, sigma)
         raw = dist.rsample()
-        ai = (torch.tanh(raw) * math.pi).view(agent, neigh)  # (A, N)
+        ai = (torch.tanh(raw) * math.pi).view(agent, neigh)
 
-        # Attention (nur Prey-Gewichte nötig, Rolle != "prey")
-        w_flat = self.attention(states_flat, None, role="pred")  # (A*N,1)
-        weights = torch.softmax(w_flat.view(agent, neigh), dim=1)  # (A, N)
+        # Attention Weights
+        w_flat = self.attention(states_flat, None, role="pred")  # w=32
+        weights = F.softmax(w_flat.view(agent, neigh), dim=1) 
 
-        action_pred = (ai * weights).sum(dim=1)              # (A,)
-        return action_pred
-
-    # ref: https://discuss.pytorch.org/t/reinitializing-the-weights-after-each-cross-validation-fold/11034
-    def set_parameters(self, init=True):
-        if init is True:
-            for layer in self.modules():
-                if hasattr(layer, 'reset_parameters'):
-                    layer.reset_parameters()
+        # Weighted Action
+        action_pred = (ai * weights).sum(dim=1)              # a=1
+        return action_pred, mu, sigma, weights
 
 
     def update(self, role, network,
@@ -249,3 +202,11 @@ class GeneratorPolicy(nn.Module):
         pool.close()
         pool.join()
         return metrics
+    
+
+    # ref: https://discuss.pytorch.org/t/reinitializing-the-weights-after-each-cross-validation-fold/11034
+    def set_parameters(self, init=True):
+        if init is True:
+            for layer in self.modules():
+                if hasattr(layer, 'reset_parameters'):
+                    layer.reset_parameters()

@@ -28,12 +28,6 @@ class Discriminator(nn.Module):
         x = self.fc3(x)
         return x.view(batch_size) # D(s,a) = P(„kommt von Expert“∣(s,a))
 
-    def set_parameters(self, init=False):
-        if init is True:
-            for layer in self.modules():
-                if hasattr(layer, 'reset_parameters'):
-                    layer.reset_parameters()
-
     def update(self, expert_batch, policy_batch, optim_dis, lambda_gp):
         expert_batch = expert_batch.detach()
         policy_batch = policy_batch.detach()
@@ -49,3 +43,10 @@ class Discriminator(nn.Module):
         optim_dis.step()
 
         return (wasserstein_loss.item(), grad_penalty.item(), exp_scores.mean().item(), gen_scores.mean().item())
+    
+    # ref: https://discuss.pytorch.org/t/reinitializing-the-weights-after-each-cross-validation-fold/11034
+    def set_parameters(self, init=False):
+        if init is True:
+            for layer in self.modules():
+                if hasattr(layer, 'reset_parameters'):
+                    layer.reset_parameters()

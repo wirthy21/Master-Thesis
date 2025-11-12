@@ -247,9 +247,7 @@ class EarlyStoppingWasserstein:
 
 
 
-def pretrain_policy(policy, expert_buffer, role,
-                    pred_bs=32, prey_bs=256,
-                    epochs=10, lr=1e-3, device='cpu', save_dir=None):
+def pretrain_policy(policy, expert_buffer, role, pred_bs=32, prey_bs=256, epochs=10, lr=1e-3, device='cpu', save_dir=None):
 
     if role == 'predator':
         batch, _ = expert_buffer.sample(pred_bs, prey_bs)
