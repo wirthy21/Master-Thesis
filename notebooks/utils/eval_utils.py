@@ -81,86 +81,146 @@ def plot_pretraining(logs_pretrain_pred, logs_pretrain_prey):
 
 
 def compute_polarization(vx, vy):
-    v = np.stack([vx, vy], axis=1)
-    norms = np.linalg.norm(v, axis=1, keepdims=True)
-    u = v / (norms + 1e-8)
+    stacked_vs = np.stack([vx, vy], axis=1)
+    norms = np.linalg.norm(stacked_vs, axis=1, keepdims=True)
+    norm_vs = stacked_vs / (norms + 1e-8)
+    prey_vs = norm_vs[1:]
+    mean_vs = prey_vs.mean(axis=0)
+    polarization_score = np.linalg.norm(mean_vs)
+    return polarization_score
 
-    u_pred = u[0:1]
-    pred_score = np.linalg.norm(u_pred.mean(axis=0))
 
-    u_prey = u[1:]
-    prey_score = np.linalg.norm(u_prey.mean(axis=0))
-
-    return (pred_score, prey_score)
+def degree_of_sparsity(x, y):
+    stacked_positions = np.stack([x, y], axis=1)
+    prey_positions = stacked_positions[1:]
+    diff = prey_positions[:, None, :] - prey_positions[None, :, :] # compute pairwise distances
+    dists = np.linalg.norm(diff, axis=-1)
+    np.fill_diagonal(dists, np.inf) # ignore self-distance
+    nn_dists = dists.min(axis=1)
+    return nn_dists.mean()
 
 
 def compute_angular_momentum(x, y, vx, vy):
-    v = np.stack([vx, vy], axis=1)
-    norms = np.linalg.norm(v, axis=1, keepdims=True)
-    u = v / (norms + 1e-8)
-    r = np.stack([x, y], axis=1)
-    center = r.mean(axis=0)
-    r_rel = r - center
-    cross_z = r_rel[:,0] * u[:,1] - r_rel[:,1] * u[:,0]
-    pred_am = np.abs(cross_z[0])
-    prey_am = np.abs(cross_z[1:].mean())
-    return (pred_am, prey_am)
+    positions = np.stack([x, y], axis=1)
+    velocities = np.stack([vx, vy], axis=1)
+    prey_pos = positions[1:]
+    prey_vel = velocities[1:]
 
+    center = prey_pos.mean(axis=0)
+    rel_pos = prey_pos - center
+    norms = np.linalg.norm(prey_vel, axis=1, keepdims=True)
+    v_hat = prey_vel / (norms + 1e-8)
 
-def mean_pairwise_distance(dx, dy):
-    dx = np.array(dx)
-    dy = np.array(dy)
-    
-    pred_dx = dx[0, 1:]
-    pred_dy = dy[0, 1:]
-    pred_dist = np.sqrt(pred_dx**2 + pred_dy**2).mean()
-    
-    prey_dx = dx[1:, 1:]
-    prey_dy = dy[1:, 1:]
-    prey_dist = np.sqrt(prey_dx**2 + pred_dy**2).mean()
-    
-    return pred_dist, prey_dist
+    Lz = rel_pos[:, 0] * v_hat[:, 1] - rel_pos[:, 1] * v_hat[:, 0] # cross product z-component
+    return np.abs(Lz.mean())
 
 
 
-def run_policies(env, pred_policy, prey_policy, prey_features=4): 
-    print("Press 'q' to end simulation.")
+def run_policies(env, pred_policy, prey_policy, prey_features=4, render=True):
+    if render:
+        print("Press 'q' to end simulation.")
 
     metrics = []
 
     while True:
-        if keyboard.is_pressed('q'):
+        # Stop only if rendering is enabled
+        if render and keyboard.is_pressed('q'):
             break
 
         global_state = env.state().item()
         pred_tensor, prey_tensor, xs, ys, dx, dy, vxs, vys = get_eval_features(global_state)
 
+        # Predator
         pred_states = pred_tensor[..., :4]
         con_pred = pred_policy.forward_pred(pred_states)
         dis_pred = continuous_to_discrete(con_pred, 360, role='predator')
 
+        # Prey
         prey_states = prey_tensor[..., :prey_features]
         con_prey = prey_policy.forward_prey(prey_states)
         dis_prey = continuous_to_discrete(con_prey, 360, role='prey')
 
+        # Action dictionary
         action_dict = {'predator_0': dis_pred}
         for i, agent_name in enumerate(sorted([agent for agent in env.agents if agent.startswith("prey")])):
             action_dict[agent_name] = dis_prey[i]
 
         env.step(action_dict)
 
-        metrics.append({"polarization": compute_polarization(vxs, vys),
-                        "angular_momentum": compute_angular_momentum(xs, ys, vxs, vys),
-                        "mean_pairwise_distance": mean_pairwise_distance(dx, dy),
-                        "xs": xs,
-                        "ys": ys,
-                        "dx": dx,
-                        "dy": dy,
-                        "vxs": vxs,
-                        "vys": vys})
-        
-        env.render()
+        # Log metrics
+        metrics.append({
+            "polarization": compute_polarization(vxs, vys),
+            "angular_momentum": compute_angular_momentum(xs, ys, vxs, vys),
+            "mean_pairwise_distance": degree_of_sparsity(xs, ys),
+            "xs": xs,
+            "ys": ys,
+            "dx": dx,
+            "dy": dy,
+            "vxs": vxs,
+            "vys": vys
+        })
 
+        # Render only if user wants it
+        if render:
+            env.render()
+
+    # Try closing the environment
+    try:
+        env.close()
+    except:
+        pass
+
+    return metrics
+
+
+def run_policies_in_steps(env, pred_policy, prey_policy, steps=200, render=True):
+    if render:
+        print("Press 'q' to end simulation.")
+
+    metrics = []
+
+    for frame in range(steps):
+        if render and keyboard.is_pressed('q'):
+            break
+
+        global_state = env.state().item()
+        pred_tensor, prey_tensor, xs, ys, dx, dy, vxs, vys = get_eval_features(global_state)
+
+        # Predator
+        pred_states = pred_tensor[..., :4]
+        action_pred, mu, sigma, weight = pred_policy.forward_pred(pred_states)
+        dis_pred = continuous_to_discrete(action_pred, 360, role='predator')
+
+        # Prey
+        prey_states = prey_tensor[..., :4]
+        action_prey, mu, sigma, weight = prey_policy.forward_prey(prey_states)
+        dis_prey = continuous_to_discrete(action_prey, 360, role='prey')
+
+        # Action dictionary
+        action_dict = {'predator_0': dis_pred}
+        for i, agent_name in enumerate(sorted([agent for agent in env.agents if agent.startswith("prey")])):
+            action_dict[agent_name] = dis_prey[i]
+
+        env.step(action_dict)
+
+        # Log metrics
+        metrics.append({
+            "polarization": compute_polarization(vxs, vys),
+            "angular_momentum": compute_angular_momentum(xs, ys, vxs, vys),
+            "mean_pairwise_distance": mean_pairwise_distance(dx, dy),
+            "xs": xs,
+            "ys": ys,
+            "dx": dx,
+            "dy": dy,
+            "vxs": vxs,
+            "vys": vys
+        })
+
+        # Render only if user wants it
+        if render:
+            env.render()
+
+    # Try closing the environment
     try:
         env.close()
     except:
@@ -377,3 +437,5 @@ def plot_trajectory(metrics, role="predator"):
     plt.axis([0, 1, 0, 1])
     plt.tight_layout()
     plt.show()
+
+

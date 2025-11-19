@@ -26,7 +26,7 @@ class Discriminator(nn.Module):
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
         x = self.fc3(x)
-        return x.view(batch_size) # D(s,a) = P(„kommt von Expert“∣(s,a))
+        return x.view(batch_size) # f(s,a): Wasserstein-Critic-Score (higher = closer to Expert)
 
     def update(self, expert_batch, policy_batch, optim_dis, lambda_gp):
         expert_batch = expert_batch.detach()

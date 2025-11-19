@@ -1,15 +1,20 @@
+import sys, os
+sys.path.insert(0, os.path.abspath('..'))
+
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal
 from multiprocessing import Pool, set_start_method
-from ModularNetworks import PairwiseInteraction, Attention
+from models.ModularNetworks import PairwiseInteraction, Attention
 
 
 class PreyPolicy(nn.Module):
-    def __init__(self, features=4):
+    def __init__(self, features=4, gain=0.0):
         super(PreyPolicy, self).__init__()
-        self.features = features
+        self.pred_gain = nn.Parameter(torch.tensor(gain))
+
         self.prey_pairwise = PairwiseInteraction(features)
         self.prey_attention = Attention(features)
 
@@ -18,26 +23,69 @@ class PreyPolicy(nn.Module):
 
     def forward(self, states):
         agents, neigh, feat = states.shape                  # Shape: (32,32,4)
-        pred_states = states[:, 0, :].unsqueeze(1)          # Shape: (32,1,4)
-        prey_states = states[:, 1:, :]                      # Shape: (32,31,4)
 
-        ##### Predator Attention #####
-        agents, neigh, feat = states.shape                   # Shape: (1,32,4)
-        states_flat = states.reshape(agents * neigh, feat)   # Shape: (32,4)
+        device = states.device
+        dtype  = states.dtype
 
-        # Sample Action from PI-Distribution
-        mu, sigma = self.pairwise(states_flat)               # mu=32, simga=32
-        sampled_action = Normal(mu, sigma).sample()
-        actions = torch.tanh(sampled_action).view(agents, neigh) # Value Range [-1:1]
+        ##### Predator #####
+        pred_states = states[:, 0, :]                               # Shape: (32,1,4)
+        mu_pred, sigma_pred = self.pred_pairwise(pred_states)       # mu=32, simga=32
+        sampled_pred_action = Normal(mu_pred, sigma_pred).sample()  # actions=32
+        pred_actions = torch.tanh(sampled_pred_action) * math.pi    # Value Range [-pi:pi]
 
-        # Attention Weights
-        weight_logits = self.attention(states_flat).view(agents, neigh)
-        weights = torch.softmax(weight_logits, dim=1)
+        pred_weight_logits = self.pred_attention(pred_states)       # weights=32
+        pred_weights = torch.softmax(pred_weight_logits, dim=1)          
 
-        # Action Calculation
-        action = (actions * weights).sum(dim=1)
-        return action, mu, sigma, weights
-    
+        ##### Prey #####
+        prey_states = states[:, 1:, :]                                      # Shape: (32,31,4)
+        prey_states_flat   = prey_states.reshape(agents * (neigh-1), feat)  # Shape: (32*31,4)
+
+        mu_prey, sigma_prey = self.prey_pairwise(prey_states_flat)          # mu=32*31, simga=32*31
+        sampled_prey_action = Normal(mu_prey, sigma_prey).sample()          # actions=32*31
+        prey_actions = (torch.tanh(sampled_prey_action) * math.pi).view(agents, neigh - 1, 1)
+
+        prey_weight_logits = self.prey_attention(prey_states_flat)
+        prey_weight_logits = prey_weight_logits.view(agents, neigh-1)       # [A, N-1]
+        prey_weights = torch.softmax(prey_weight_logits, dim=1).view(agents, neigh-1, 1)
+
+        ##### Action Aggregation #####
+
+        # Ensure gain is positive
+        pred_gain = torch.sigmoid(self.pred_gain)
+
+        # Aggregation of Predator Actions per Prey
+        pred_action_per_prey = (pred_actions * pred_weights).sum(dim=1)
+
+        # Aggregation of Prey Actions per Prey
+        prey_actions_nei = prey_actions.squeeze(-1)
+        prey_weights_nei = prey_weights.squeeze(-1)
+        prey_action_per_prey = (prey_actions_nei * prey_weights_nei).sum(dim=1)
+
+        final_action = pred_gain * pred_action_per_prey + (1.0 - pred_gain) * prey_action_per_prey
+
+        ##### Logging #####
+
+        mu_full = torch.zeros(agents, neigh, 1, device=device, dtype=dtype)
+        sigma_full = torch.zeros_like(mu_full)
+        weights_full = torch.zeros_like(mu_full)
+
+        # Predator index 0
+        mu_full[:, 0, :] = mu_pred 
+        sigma_full[:, 0, :] = sigma_pred 
+        weights_full[:, 0, :] = pred_weights
+
+        # Prey indices 1..
+        mu_full[:, 1:, :] = mu_prey.view(agents, neigh-1, 1)
+        sigma_full[:, 1:, :] = sigma_prey.view(agents, neigh-1, 1)
+        weights_full[:, 1:, :] = prey_weights
+
+        # fürs Logging: [A, N]
+        mu_log = mu_full.squeeze(-1)
+        sigma_log = sigma_full.squeeze(-1)
+        weights_log = weights_full.squeeze(-1)
+
+        return final_action, mu_log, sigma_log, weights_log, pred_gain
+
 
     def update(self, role, network,
             pred_count, prey_count, action_count,
@@ -47,10 +95,15 @@ class PreyPolicy(nn.Module):
             lr_pred_policy, lr_prey_policy,
             sigma, gamma, clip_length, use_walls, start_frame_pool):
 
-        module = self.pairwise if network == "pairwise" else self.attention
+        if role == "predator":
+            module = self.pred_pairwise if network == "pairwise" else self.pred_attention
+            lr = lr_pred_policy
+        else:
+            module = self.prey_pairwise if network == "pairwise" else self.prey_attention
+            lr = lr_prey_policy
+
         theta = nn.utils.parameters_to_vector(module.parameters()).detach().clone()
         dim = theta.numel()
-        lr = lr_pred_policy if role == "predator" else lr_prey_policy
 
         # Use spawn safely
         try:
@@ -79,8 +132,7 @@ class PreyPolicy(nn.Module):
         std  = stacked_diffs.std(unbiased=False) + 1e-8
         normed = (stacked_diffs - mean) / std
 
-        theta_new = gradient_estimate(theta, normed, dim,
-                                    epsilons, sigma, lr, num_perturbations)
+        theta_new = gradient_estimate(theta, normed, dim, epsilons, sigma, lr, num_perturbations)
 
         grad_norm = (theta_new - theta).norm().item()
 

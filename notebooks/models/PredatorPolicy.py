@@ -1,26 +1,29 @@
+import sys, os
+sys.path.insert(0, os.path.abspath('..'))
+
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal
 from multiprocessing import Pool, set_start_method
-from ModularNetworks import PairwiseInteraction, Attention
+from models.ModularNetworks import PairwiseInteraction, Attention
 
 
 class PredatorPolicy(nn.Module):
     def __init__(self, features=4):
         super(PredatorPolicy, self).__init__()
-        self.features = features
         self.pairwise = PairwiseInteraction(features)
         self.attention = Attention(features)
 
-    def forward_pred(self, states):
+    def forward(self, states):
         agents, neigh, feat = states.shape                   # Shape: (1,32,4)
         states_flat = states.reshape(agents * neigh, feat)   # Shape: (32,4)
 
         # Sample Action from PI-Distribution
         mu, sigma = self.pairwise(states_flat)               # mu=32, simga=32
-        sampled_action = Normal(mu, sigma).sample()
-        actions = torch.tanh(sampled_action).view(agents, neigh) # Value Range [-1:1]
+        sampled_action = Normal(mu, sigma).rsample()
+        actions = (torch.tanh(sampled_action) * math.pi).view(agents, neigh) # Value Range [-pi:pi]
 
         # Attention Weights
         weight_logits = self.attention(states_flat).view(agents, neigh)
@@ -42,7 +45,7 @@ class PredatorPolicy(nn.Module):
         module = self.pairwise if network == "pairwise" else self.attention
         theta = nn.utils.parameters_to_vector(module.parameters()).detach().clone()
         dim = theta.numel()
-        lr = lr_pred_policy if role == "predator" else lr_prey_policy
+        lr = lr_pred_policy
 
         # Use spawn safely
         try:
@@ -71,8 +74,7 @@ class PredatorPolicy(nn.Module):
         std  = stacked_diffs.std(unbiased=False) + 1e-8
         normed = (stacked_diffs - mean) / std
 
-        theta_new = gradient_estimate(theta, normed, dim,
-                                    epsilons, sigma, lr, num_perturbations)
+        theta_new = gradient_estimate(theta, normed, dim, epsilons, sigma, lr, num_perturbations)
 
         grad_norm = (theta_new - theta).norm().item()
 

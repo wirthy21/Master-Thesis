@@ -14,14 +14,6 @@ def discriminator_reward(pred_tensors, prey_tensors, pred_discriminator, prey_di
     pred_scores = pred_discriminator(pred_flat)
     prey_scores = prey_discriminator(prey_flat)
 
-    # Logit-style reward
-    #r_pred = torch.log(pred_scores + eps) - torch.log(1 - pred_scores + eps)
-    #r_prey = torch.log(prey_scores + eps) - torch.log(1 - prey_scores + eps)
-
-    # Reward normalization
-    #reward_pred = (r_pred - r_pred.mean()) / (r_pred.std(unbiased=False) + eps) liefert nur 0 Werte
-    #reward_prey = (r_prey - r_prey.mean()) / (r_prey.std(unbiased=False) + eps)
-
     return pred_scores.mean(), prey_scores.mean()
 
 
@@ -38,19 +30,16 @@ def apply_perturbation(args):
     (module, theta, eps, pred_count, prey_count, action_count, pred_policy, prey_policy, pred_disc, prey_disc, role, pert_clip_length, use_walls, start_frame_pool) = args
     env = parallel_env(predator_count=pred_count, prey_count=prey_count, action_count=action_count, use_walls=use_walls)
     positions = start_frame_pool.sample(n=1)
-    env.reset(options=positions)
 
     if role == "predator":
-        # positive
-        #env = parallel_env(predator_count=pred_count, prey_count=prey_count, action_count=action_count, use_walls=use_walls)
-        #obs, infos = env.reset(options=positions)
+        #positive
+        env.reset(options=positions)
         nn.utils.vector_to_parameters(theta + eps, module.parameters())
         states_pred_pos, _ = parallel_get_rollouts(env, pred_count, prey_count, action_count, pred_policy, prey_policy, clip_length=pert_clip_length)
         reward_pred_pos, _ = discriminator_reward(states_pred_pos, _, pred_disc, prey_disc)
 
         # negative
-        #env = parallel_env(predator_count=pred_count, prey_count=prey_count, action_count=action_count, use_walls=use_walls)
-        #obs, infos = env.reset(options=positions)
+        env.reset(options=positions)
         nn.utils.vector_to_parameters(theta - eps, module.parameters())
         states_pred_neg, _ = parallel_get_rollouts(env, pred_count, prey_count, action_count, pred_policy, prey_policy, clip_length=pert_clip_length)
         reward_pred_neg, _ = discriminator_reward(states_pred_neg, _, pred_disc, prey_disc)
@@ -64,15 +53,13 @@ def apply_perturbation(args):
 
     else:
         # positive
-        #env = parallel_env(predator_count=pred_count, prey_count=prey_count, action_count=action_count, use_walls=use_walls)
-        #env.reset(options=positions)
+        env.reset(options=positions)
         nn.utils.vector_to_parameters(theta + eps, module.parameters())
         _, states_prey_pos = parallel_get_rollouts(env, pred_count, prey_count, action_count, pred_policy, prey_policy, clip_length=pert_clip_length)
         _, reward_prey_pos = discriminator_reward(_, states_prey_pos, pred_disc, prey_disc)
 
         # negative
-        #env = parallel_env(predator_count=pred_count, prey_count=prey_count, action_count=action_count, use_walls=use_walls)
-        #env.reset(options=positions)
+        env.reset(options=positions)
         nn.utils.vector_to_parameters(theta - eps, module.parameters())
         _, states_prey_neg = parallel_get_rollouts(env, pred_count, prey_count, action_count, pred_policy, prey_policy, clip_length=pert_clip_length)
         _, reward_prey_neg = discriminator_reward(_, states_prey_neg, pred_disc, prey_disc)

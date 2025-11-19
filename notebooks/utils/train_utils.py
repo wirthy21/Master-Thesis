@@ -153,69 +153,6 @@ def remaining_time(num_generations, last_epoch_duration, current_generation):
     return estimated_time, epoch_str
     
 
-class EarlyStopping:
-    def __init__(self, patience=10):
-        self.patience = patience
-        self.best_metric = None
-        self.epochs_no_improve = 0
-        self.early_stop = False
-
-    def __call__(self, avg_es, role="predator"):
-        if self.best_metric is None:
-            self.best_metric = avg_es
-            return False
-
-        if avg_es > self.best_metric:
-            self.best_metric = avg_es
-            self.epochs_no_improve = 0
-        else:
-            self.epochs_no_improve += 1
-            if self.epochs_no_improve >= self.patience:
-                print(f"[{role.upper()}] Early stopping triggered after {self.patience} epochs.")
-                self.early_stop = True
-
-        return self.early_stop
-
-
-class EarlyStoppingWindow:
-    def __init__(self, patience=10, window_size=10, min_slope=0.0):
-        from collections import deque
-        self.window = window_size
-        self.patience = patience
-        self.min_slope = min_slope
-        self.queue = deque(maxlen=window_size)
-        self.bad_windows = 0
-        self.early_stop = False
-
-    def _slope(self, values):
-        n = len(values)
-        if n < 2:
-            return 0.0
-        x_mean = (n - 1) / 2
-        y_mean = sum(values) / n
-        num = sum((i - x_mean) * (y - y_mean) for i, y in enumerate(values))
-        den = sum((i - x_mean) ** 2 for i in range(n))
-        return num / den if den else 0.0
-
-    def __call__(self, metric, role="predator"):
-        self.queue.append(metric)
-        if len(self.queue) < self.window:
-            return False
-
-        slope = self._slope(self.queue)
-
-        if slope <= self.min_slope:
-            self.bad_windows += 1
-        else:
-            self.bad_windows = 0
-
-        if self.bad_windows >= self.patience:
-            print(f"[{role.upper()}] Early stopping triggered after {self.patience} epochs.")
-            self.early_stop = True
-
-        return self.early_stop
-    
-
 class EarlyStoppingWasserstein:
     def __init__(self, patience=10, start_es=50):
         self.patience = patience

@@ -16,7 +16,7 @@ def get_features(global_state):
 
     xs = np.fromiter((r[1] for r in raw), dtype=np.float32, count=n) # [0, width]
     ys = np.fromiter((r[2] for r in raw), dtype=np.float32, count=n) # [0, height]
-    directions = np.fromiter((r[3] for r in raw), dtype=np.float32, count=n) # [-180, 180]
+    directions = np.fromiter((r[3] for r in raw), dtype=np.float32, count=n) # [0, 1]
     speeds = np.fromiter((r[4] for r in raw), dtype=np.float32, count=n) # [0, max_speed]
     
     thetas = (directions - 0.5) * (2 * np.pi)     # [-pi, pi]
