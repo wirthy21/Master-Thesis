@@ -47,4 +47,33 @@ class Attention(nn.Module):
         return weight
     
 
-    
+class PredatorInteraction(nn.Module):
+    def __init__(self, features):
+        super(PredatorInteraction, self).__init__()
+        self.fc1 = nn.Linear(features, 64)
+        self.fc2 = nn.Linear(64, 32)
+        self.fc3 = nn.Linear(32, 2)  # mu, sigma
+
+    def forward(self, states):
+        params = F.relu(self.fc1(states))
+        params = F.relu(self.fc2(params))
+        params = self.fc3(params)
+
+        mu, var_logit = params[:, :1], params[:, 1:]
+        var = F.softplus(var_logit) + 1e-6
+        sigma = var.sqrt()
+        return mu, sigma
+
+
+class PredatorAttention(nn.Module):
+    def __init__(self, features):
+        super(PredatorAttention, self).__init__()
+        self.fc1 = nn.Linear(features, 64)
+        self.fc2 = nn.Linear(64, 32)
+        self.fc3 = nn.Linear(32, 1)  # weight
+
+    def forward(self, states):
+        weight = F.relu(self.fc1(states))
+        weight = F.relu(self.fc2(weight))
+        weight = self.fc3(weight)
+        return weight

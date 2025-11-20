@@ -156,41 +156,61 @@ def get_expert_features(frame, width, height, max_speed=25):
     pred_tensor = torch.from_numpy(neigh[0]).unsqueeze(0)
     prey_tensor = torch.from_numpy(neigh[1:]) # shape (N-1, N-1, 5)
 
-    return pred_tensor, prey_tensor
+    return pred_tensor, prey_tensor, xs, ys, vxs, vys
 
 
 def get_expert_tensors(full_track_windows, valid_windows, width, height, max_speed=25, window_size=9):
     if len(valid_windows) == 0:
-        return torch.empty(0), torch.empty(0)
+        empty_metrics = {"xs": [], "ys": [], "vxs": [], "vys": []}
+        return torch.empty(0), torch.empty(0), empty_metrics
     
-    else:
-        start_frames = [vw['start_frame'] for vw in valid_windows]
-        pred_windows = []
-        prey_windows = []
+    start_frames = [vw['start_frame'] for vw in valid_windows]
+    pred_windows = []
+    prey_windows = []
+    expert_metrics = {"xs": [], "ys": [], "vxs": [], "vys": []}
 
-        for idx, start in enumerate(start_frames):
-            window_detections = []
-            for frame in range(start, start + window_size):
-                dets = [det for det in full_track_windows[idx] if det['frame'] == frame]
-                window_detections.append(dets)
+    for idx, start in enumerate(start_frames):
+        window_detections = []
+        for frame in range(start, start + window_size):
+            dets = [det for det in full_track_windows[idx] if det['frame'] == frame]
+            window_detections.append(dets)
 
-            preds = []
-            preys = []
-            for dets in window_detections:
-                pred_tensor, prey_tensor = get_expert_features(dets, width, height, max_speed)
-                preds.append(pred_tensor)
-                preys.append(prey_tensor)
+        preds = []
+        preys = []
 
-            pred_windows.append(torch.stack(preds, dim=0))
-            prey_windows.append(torch.stack(preys, dim=0))
+        xs_all = []
+        ys_all = []
+        vxs_all = []
+        vys_all = []
 
-        pred_tensor = torch.stack(pred_windows, dim=0)
-        prey_tensor = torch.stack(prey_windows, dim=0)
+        for dets in window_detections:
+            pred_tensor, prey_tensor, xs_frame, ys_frame, vxs_frame, vys_frame = get_expert_features(
+                dets, width, height, max_speed
+            )
 
-        total, n_clips, agent, neigh, feat = pred_tensor.shape
-        pred_tensors = pred_tensor.reshape(total * n_clips, agent, neigh, feat)
+            preds.append(pred_tensor)
+            preys.append(prey_tensor)
 
-        total, n_clips, agent, neigh, feat = prey_tensor.shape
-        prey_tensors = prey_tensor.reshape(total * n_clips, agent, neigh, feat)
+            xs_all.extend(xs_frame)
+            ys_all.extend(ys_frame)
+            vxs_all.extend(vxs_frame)
+            vys_all.extend(vys_frame)
 
-        return pred_tensors, prey_tensors
+        pred_windows.append(torch.stack(preds, dim=0))
+        prey_windows.append(torch.stack(preys, dim=0))
+
+        expert_metrics["xs"].extend(xs_all)
+        expert_metrics["ys"].extend(ys_all)
+        expert_metrics["vxs"].extend(vxs_all)
+        expert_metrics["vys"].extend(vys_all)
+
+    pred_tensor = torch.stack(pred_windows, dim=0)
+    prey_tensor = torch.stack(prey_windows, dim=0)
+
+    total, n_clips, agent, neigh, feat = pred_tensor.shape
+    pred_tensors = pred_tensor.reshape(total * n_clips, agent, neigh, feat)
+
+    total, n_clips, agent, neigh, feat = prey_tensor.shape
+    prey_tensors = prey_tensor.reshape(total * n_clips, agent, neigh, feat)
+
+    return pred_tensors, prey_tensors, expert_metrics

@@ -7,6 +7,7 @@ import pandas as pd
 from utils.env_utils import *
 from utils.train_utils import *
 import matplotlib.pyplot as plt
+from scipy.spatial import cKDTree
 from marl_aquarium import aquarium_v0
 
 def get_eval_features(global_state):
@@ -83,20 +84,18 @@ def plot_pretraining(logs_pretrain_pred, logs_pretrain_prey):
 def compute_polarization(vx, vy):
     stacked_vs = np.stack([vx, vy], axis=1)
     norms = np.linalg.norm(stacked_vs, axis=1, keepdims=True)
-    norm_vs = stacked_vs / (norms + 1e-8)
+    norm_vs = stacked_vs / norms
     prey_vs = norm_vs[1:]
     mean_vs = prey_vs.mean(axis=0)
     polarization_score = np.linalg.norm(mean_vs)
     return polarization_score
 
 
-def degree_of_sparsity(x, y):
-    stacked_positions = np.stack([x, y], axis=1)
-    prey_positions = stacked_positions[1:]
-    diff = prey_positions[:, None, :] - prey_positions[None, :, :] # compute pairwise distances
-    dists = np.linalg.norm(diff, axis=-1)
-    np.fill_diagonal(dists, np.inf) # ignore self-distance
-    nn_dists = dists.min(axis=1)
+def degree_of_sparsity(xs, ys):
+    points = np.column_stack((xs, ys))
+    tree = cKDTree(points) #faster in calculation
+    dists, _ = tree.query(points, k=2)
+    nn_dists = dists[:, 1]
     return nn_dists.mean()
 
 
@@ -115,30 +114,119 @@ def compute_angular_momentum(x, y, vx, vy):
     return np.abs(Lz.mean())
 
 
+def distance_to_predator(xs, ys):
+    predator_pos = np.array([xs[0], ys[0]])
+    prey_pos = np.stack([xs[1:], ys[1:]], axis=1)
 
-def run_policies(env, pred_policy, prey_policy, prey_features=4, render=True):
+    center = prey_pos.mean(axis=0)
+    return float(np.linalg.norm(center - predator_pos))
+
+
+def escape_alignment(xs, ys, vxs, vys):
+    pred_pos = np.array([xs[0], ys[0]])
+
+    prey_pos = np.stack([xs[1:], ys[1:]], axis=1)
+    prey_vel = np.stack([vxs[1:], vys[1:]], axis=1)
+
+    escape_dir = prey_pos - pred_pos
+    escape_dir_norm = np.linalg.norm(escape_dir, axis=1, keepdims=True)
+    escape_dir = escape_dir / (escape_dir_norm + 1e-8)
+
+    vel_norm = np.linalg.norm(prey_vel, axis=1, keepdims=True)
+    prey_vel_normed = prey_vel / (vel_norm + 1e-8)
+
+    alignment = np.mean(np.sum(prey_vel_normed * escape_dir, axis=1))
+    return float(alignment)
+
+
+def compute_expert_metrics2(expert_data):
+    polarizations = []
+    angular_momenta = []
+    sparsities = []
+    distances_to_predator = []
+    escape_alignments = []
+
+    for video in expert_data.keys():
+        xs  = expert_data[video]["xs"]
+        ys  = expert_data[video]["ys"]
+        vxs = expert_data[video]["vxs"]
+        vys = expert_data[video]["vys"]
+
+        polarizations.append(compute_polarization(vxs, vys))
+        angular_momenta.append(compute_angular_momentum(xs, ys, vxs, vys))
+        sparsities.append(degree_of_sparsity(xs, ys))
+        distances_to_predator.append(distance_to_predator(xs, ys))
+        escape_alignments.append(escape_alignment(xs, ys, vxs, vys))
+
+    return {"polarization": polarizations, 
+            "angular_momentum": angular_momenta,
+            "sparsity": sparsities,
+            "distance_to_predator": distances_to_predator,
+            "escape_alignment": escape_alignments}
+
+
+def compute_expert_metrics(expert_data, num_agents):
+    polarizations = []
+    angular_momenta = []
+    sparsities = []
+    distances_to_predator = []
+    escape_alignments = []
+
+    for video in expert_data.keys():
+        xs  = np.asarray(expert_data[video]["xs"])  # shape (T*N,)
+        ys  = np.asarray(expert_data[video]["ys"])
+        vxs = np.asarray(expert_data[video]["vxs"])
+        vys = np.asarray(expert_data[video]["vys"])
+
+        # --- in (T, N) umformen ---
+        T = len(xs) // num_agents
+        xs  = xs.reshape(T, num_agents)
+        ys  = ys.reshape(T, num_agents)
+        vxs = vxs.reshape(T, num_agents)
+        vys = vys.reshape(T, num_agents)
+
+        # --- pro Frame Metriken berechnen ---
+        for t in range(T):
+            x_t  = xs[t]    # (N,)
+            y_t  = ys[t]
+            vx_t = vxs[t]
+            vy_t = vys[t]
+
+            polarizations.append(compute_polarization(vx_t, vy_t))
+            angular_momenta.append(compute_angular_momentum(x_t, y_t, vx_t, vy_t))
+            sparsities.append(degree_of_sparsity(x_t, y_t))
+            distances_to_predator.append(distance_to_predator(x_t, y_t))
+            escape_alignments.append(escape_alignment(x_t, y_t, vx_t, vy_t))
+
+    return {
+        "polarization": polarizations,
+        "angular_momentum": angular_momenta,
+        "sparsity": sparsities,
+        "distance_to_predator": distances_to_predator,
+        "escape_alignment": escape_alignments,
+    }
+
+
+def run_policies(env, pred_policy, prey_policy, render=True):
     if render:
         print("Press 'q' to end simulation.")
 
     metrics = []
 
     while True:
-        # Stop only if rendering is enabled
         if render and keyboard.is_pressed('q'):
             break
 
         global_state = env.state().item()
         pred_tensor, prey_tensor, xs, ys, dx, dy, vxs, vys = get_eval_features(global_state)
 
-        # Predator
         pred_states = pred_tensor[..., :4]
-        con_pred = pred_policy.forward_pred(pred_states)
-        dis_pred = continuous_to_discrete(con_pred, 360, role='predator')
+        action_pred, mu_pred, sigma_pred, weights_pred = pred_policy.forward(pred_states)
+        dis_pred = continuous_to_discrete(action_pred, 360, role='predator')
 
-        # Prey
-        prey_states = prey_tensor[..., :prey_features]
-        con_prey = prey_policy.forward_prey(prey_states)
-        dis_prey = continuous_to_discrete(con_prey, 360, role='prey')
+        prey_states = prey_tensor[..., :4]
+        action_prey, mu_prey, sigma_prey, weights_prey, pred_gain = prey_policy.forward(prey_states)
+        dis_prey = continuous_to_discrete(action_prey, 360, role='prey')
 
         # Action dictionary
         action_dict = {'predator_0': dis_pred}
@@ -151,7 +239,14 @@ def run_policies(env, pred_policy, prey_policy, prey_features=4, render=True):
         metrics.append({
             "polarization": compute_polarization(vxs, vys),
             "angular_momentum": compute_angular_momentum(xs, ys, vxs, vys),
-            "mean_pairwise_distance": degree_of_sparsity(xs, ys),
+            "degree_of_sparsity": degree_of_sparsity(xs, ys),
+            "distance_to_predator": distance_to_predator(xs, ys),
+            "escape_alignment": escape_alignment(xs, ys, vxs, vys),
+            "actions": (dis_pred, dis_prey),
+            "mu": (mu_pred, mu_prey),
+            "sigma": (sigma_pred, sigma_prey),
+            "weights": (weights_pred, weights_prey),
+            "pred_gain": pred_gain,
             "xs": xs,
             "ys": ys,
             "dx": dx,
@@ -188,12 +283,11 @@ def run_policies_in_steps(env, pred_policy, prey_policy, steps=200, render=True)
 
         # Predator
         pred_states = pred_tensor[..., :4]
-        action_pred, mu, sigma, weight = pred_policy.forward_pred(pred_states)
+        action_pred, mu_pred, sigma_pred, weights_pred = pred_policy.forward(pred_states)
         dis_pred = continuous_to_discrete(action_pred, 360, role='predator')
 
-        # Prey
         prey_states = prey_tensor[..., :4]
-        action_prey, mu, sigma, weight = prey_policy.forward_prey(prey_states)
+        action_prey, mu_prey, sigma_prey, weights_prey, pred_gain = prey_policy.forward(prey_states)
         dis_prey = continuous_to_discrete(action_prey, 360, role='prey')
 
         # Action dictionary
@@ -207,7 +301,14 @@ def run_policies_in_steps(env, pred_policy, prey_policy, steps=200, render=True)
         metrics.append({
             "polarization": compute_polarization(vxs, vys),
             "angular_momentum": compute_angular_momentum(xs, ys, vxs, vys),
-            "mean_pairwise_distance": mean_pairwise_distance(dx, dy),
+            "degree_of_sparsity": degree_of_sparsity(xs, ys),
+            "distance_to_predator": distance_to_predator(xs, ys),
+            "escape_alignment": escape_alignment(xs, ys, vxs, vys),
+            "actions": (dis_pred, dis_prey),
+            "mu": (mu_pred, mu_prey),
+            "sigma": (sigma_pred, sigma_prey),
+            "weights": (weights_pred, weights_prey),
+            "pred_gain": pred_gain,
             "xs": xs,
             "ys": ys,
             "dx": dx,

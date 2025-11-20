@@ -61,7 +61,7 @@ def continuous_to_discrete(actions, action_count, role="predator"):
 
 
 
-def parallel_get_rollouts(env, pred_count=1, prey_count=32, action_count=360, pred_policy=None, prey_policy=None, clip_length=30):
+def parallel_get_rollouts(env, pred_policy=None, prey_policy=None, clip_length=30):
     
     pred_tensors, prey_tensors = [], []
     
@@ -73,12 +73,12 @@ def parallel_get_rollouts(env, pred_count=1, prey_count=32, action_count=360, pr
         prey_tensors.append(prey_tensor)
 
         pred_states = pred_tensor[..., :4]
-        con_pred = pred_policy.forward_pred(pred_states)
-        dis_pred = continuous_to_discrete(con_pred, 360, role='predator')
+        action_pred, mu_pred, sigma_pred, weights_pred = pred_policy.forward(pred_states)
+        dis_pred = continuous_to_discrete(action_pred, 360, role='predator')
 
         prey_states = prey_tensor[..., :4]
-        con_prey = prey_policy.forward_prey(prey_states)
-        dis_prey = continuous_to_discrete(con_prey, 360, role='prey')
+        action_prey, mu_prey, sigma_prey, weights_prey, pred_gain = prey_policy.forward(prey_states)
+        dis_prey = continuous_to_discrete(action_prey, 360, role='prey')
 
         action_dict = {}
         for agent in env.agents:
@@ -111,9 +111,6 @@ def generate_trajectories(buffer, start_frame_pool, pred_count, prey_count, acti
             executor.submit(
                 parallel_get_rollouts,
                 make_env(predator_count=pred_count, prey_count=prey_count, action_count=action_count, use_walls=use_walls, start_frame_pool=start_frame_pool),
-                pred_count,
-                prey_count,
-                action_count,
                 pred_policy,
                 prey_policy,
                 clip_length

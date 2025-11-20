@@ -4,10 +4,12 @@ sys.path.insert(0, os.path.abspath('..'))
 import math
 import torch
 import torch.nn as nn
+from utils.es_utils import *
+from utils.env_utils import *
 import torch.nn.functional as F
 from torch.distributions import Normal
 from multiprocessing import Pool, set_start_method
-from models.ModularNetworks import PairwiseInteraction, Attention
+from models.ModularNetworks import PairwiseInteraction, Attention, PredatorInteraction, PredatorAttention
 
 
 class PreyPolicy(nn.Module):
@@ -18,8 +20,8 @@ class PreyPolicy(nn.Module):
         self.prey_pairwise = PairwiseInteraction(features)
         self.prey_attention = Attention(features)
 
-        self.pred_pairwise = PairwiseInteraction(features)
-        self.pred_attention = Attention(features)
+        self.pred_pairwise = PredatorInteraction(features)
+        self.pred_attention = PredatorAttention(features)
 
     def forward(self, states):
         agents, neigh, feat = states.shape                  # Shape: (32,32,4)

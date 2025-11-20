@@ -1,4 +1,5 @@
 import os
+import copy
 import time
 import torch
 import pandas as pd
@@ -6,7 +7,9 @@ from torch import autograd
 from utils.env_utils import *
 from collections import deque
 import torch.nn.functional as F
-from torch.utils.data import TensorDataset, DataLoader
+import matplotlib.pyplot as plt
+from torch.utils.data import TensorDataset, DataLoader, random_split
+
 
 # ref: https://towardsdatascience.com/demystified-wasserstein-gan-with-gradient-penalty-ba5e9b905ead/
 
@@ -227,3 +230,125 @@ def pretrain_policy(policy, expert_buffer, role, pred_bs=32, prey_bs=256, epochs
     torch.save(pretrain_log, os.path.join(pretrain_dir, f"pretrain_log_{role}.pt"))
 
     return policy
+
+
+
+def pretrain_policy_with_validation(policy, expert_buffer, role, val_ratio=0.2, pred_bs=256, prey_bs=512, epochs=10, lr=1e-3, device='cpu', early_stopping=True, patience=20):
+    if role == 'predator':
+        batch, _ = expert_buffer.sample(pred_bs, prey_bs)
+    else:
+        _, batch = expert_buffer.sample(pred_bs, prey_bs)
+
+    states  = batch[..., :4]
+    actions = batch[:, 0, 4].squeeze()
+
+    dataset = TensorDataset(states, actions)
+    val_size = int(len(dataset) * val_ratio)
+    train_size = len(dataset) - val_size
+    train_ds, val_ds = random_split(dataset, [train_size, val_size])
+    bs = pred_bs if role=='predator' else prey_bs
+    train_loader = DataLoader(train_ds, batch_size=bs, shuffle=True)
+    val_loader   = DataLoader(val_ds,   batch_size=bs, shuffle=False)
+
+    policy.to(device)
+    optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
+
+    train_losses, val_losses = [], []
+
+    # Early-Stopping-Tracking
+    patience_counter = 0
+    best_val_loss = float('inf')
+    best_state = copy.deepcopy(policy.state_dict())
+
+    # Logs
+    if role == 'predator':
+        logs = {"role": "predator", "mu_pred": [], "sigma_pred": [], "weights_pred": []}
+    else:
+        logs = {"role": "prey", "mu_prey": [], "sigma_prey": [], "weights_prey": [], "pred_gain": []}
+
+    for epoch in range(1, epochs + 1):
+        # ---- Train ----
+        policy.train()
+        total_train_loss = 0.0
+
+        for batch_states, batch_actions in train_loader:
+            batch_states  = batch_states.to(device)
+            batch_actions = batch_actions.to(device)
+
+            if role == 'predator':
+                actions_pred, mu_pred, sigma_pred, weights_pred = policy.forward(batch_states)
+                loss = F.mse_loss(actions_pred, batch_actions)
+            else:
+                actions_prey, mu_prey, sigma_prey, weights_prey, pred_gain = policy.forward(batch_states)
+                loss = F.mse_loss(actions_prey, batch_actions)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            total_train_loss += loss.item() * batch_states.size(0)
+
+        avg_train_loss = total_train_loss / train_size
+        train_losses.append(avg_train_loss)
+
+        if role == 'predator':
+            logs["mu_pred"].append(mu_pred.detach().cpu().numpy())
+            logs["sigma_pred"].append(sigma_pred.detach().cpu().numpy())
+            logs["weights_pred"].append(weights_pred.detach().cpu().numpy())
+        else:
+            logs["mu_prey"].append(mu_prey.detach().cpu().numpy())
+            logs["sigma_prey"].append(sigma_prey.detach().cpu().numpy())
+            logs["weights_prey"].append(weights_prey.detach().cpu().numpy())
+            logs["pred_gain"].append(pred_gain.detach().cpu().numpy())
+
+        # ---- Validation ----
+        policy.eval()
+        total_val_loss = 0.0
+        with torch.no_grad():
+            for batch_states, batch_actions in val_loader:
+                batch_states  = batch_states.to(device)
+                batch_actions = batch_actions.to(device)
+
+                if role == 'predator':
+                    actions, mu, sigma, weights = policy.forward(batch_states)
+                else:
+                    actions, mu, sigma, weights, gain = policy.forward(batch_states)
+
+                loss = F.mse_loss(actions, batch_actions)
+                total_val_loss += loss.item() * batch_states.size(0)
+
+        avg_val_loss = total_val_loss / val_size
+        val_losses.append(avg_val_loss)
+
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            best_state = copy.deepcopy(policy.state_dict())
+
+        if role == 'predator':
+            print(f"[{role.upper()}] Epoch {epoch:02d} | Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f}")
+        else:
+            print(f"[{role.upper()}] Epoch {epoch:02d} | Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f} | Pred Gain: {gain}")
+            
+        if early_stopping:
+            if avg_val_loss > avg_train_loss:
+                patience_counter += 1
+            else:
+                patience_counter = 0
+
+            if patience_counter >= patience:
+                print(f"[{role.upper()}] Early stopping triggered (Patience={patience}).")
+                break
+
+    policy.load_state_dict(best_state)
+
+    # Plot
+    epochs_run = len(train_losses)
+    plt.figure()
+    plt.plot(range(1, epochs_run + 1), train_losses, label='Train Loss', color='#005555', linewidth=2)
+    plt.plot(range(1, epochs_run + 1), val_losses, label='Val Loss', color='#A7A7A8', linewidth=2)
+    plt.xlabel('Epoch')
+    plt.ylabel('MSE Loss')
+    plt.title(f"{role.capitalize()} Loss Curves")
+    plt.legend()
+    plt.show()
+
+    return policy, logs

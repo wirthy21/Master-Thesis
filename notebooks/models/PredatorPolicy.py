@@ -4,6 +4,8 @@ sys.path.insert(0, os.path.abspath('..'))
 import math
 import torch
 import torch.nn as nn
+from utils.es_utils import *
+from utils.env_utils import *
 import torch.nn.functional as F
 from torch.distributions import Normal
 from multiprocessing import Pool, set_start_method
