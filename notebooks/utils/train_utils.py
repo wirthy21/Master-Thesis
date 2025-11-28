@@ -213,11 +213,12 @@ def pretrain_policy(policy, expert_buffer, role, pred_bs=32, prey_bs=256, epochs
             batch_actions = batch_actions.to(device)
 
             if role == 'predator':
-                est_action = policy.forward_pred(batch_states)
+                actions_pred, mu_pred, sigma_pred, weights_pred = policy.forward(batch_states)
+                loss = F.mse_loss(actions_pred, batch_actions)
             else:
-                est_action = policy.forward_prey(batch_states)
+                actions_prey, mu_prey, sigma_prey, weights_prey, pred_gain = policy.forward(batch_states, weights_pred)
+                loss = F.mse_loss(actions_prey, batch_actions)
 
-            loss = F.mse_loss(est_action, batch_actions)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -233,7 +234,7 @@ def pretrain_policy(policy, expert_buffer, role, pred_bs=32, prey_bs=256, epochs
 
 
 
-def pretrain_policy_with_validation(policy, expert_buffer, role, val_ratio=0.2, pred_bs=256, prey_bs=512, epochs=10, lr=1e-3, device='cpu', early_stopping=True, patience=20):
+def pretrain_policy_with_validation(policy, pred_policy=None, expert_buffer=None, role=None, val_ratio=0.2, pred_bs=256, prey_bs=512, epochs=10, lr=1e-3, device='cpu', early_stopping=True, patience=20):
     if role == 'predator':
         batch, _ = expert_buffer.sample(pred_bs, prey_bs)
     else:
@@ -279,7 +280,9 @@ def pretrain_policy_with_validation(policy, expert_buffer, role, val_ratio=0.2, 
                 actions_pred, mu_pred, sigma_pred, weights_pred = policy.forward(batch_states)
                 loss = F.mse_loss(actions_pred, batch_actions)
             else:
-                actions_prey, mu_prey, sigma_prey, weights_prey, pred_gain = policy.forward(batch_states)
+                actions_pred, mu_pred, sigma_pred, weights_pred = pred_policy.forward(batch_states)
+                actions_prey, mu_prey, sigma_prey, weights_prey, pred_gain = policy.forward(batch_states, weights_pred)
+                print(pred_gain)
                 loss = F.mse_loss(actions_prey, batch_actions)
 
             optimizer.zero_grad()
@@ -309,11 +312,13 @@ def pretrain_policy_with_validation(policy, expert_buffer, role, val_ratio=0.2, 
                 batch_actions = batch_actions.to(device)
 
                 if role == 'predator':
-                    actions, mu, sigma, weights = policy.forward(batch_states)
+                    actions_pred, mu_pred, sigma_pred, weights_pred = policy.forward(batch_states)
+                    loss = F.mse_loss(actions_pred, batch_actions)
                 else:
-                    actions, mu, sigma, weights, gain = policy.forward(batch_states)
+                    actions_pred, mu_pred, sigma_pred, weights_pred = pred_policy.forward(batch_states)
+                    actions_prey, mu_prey, sigma_prey, weights_prey, pred_gain_val = policy.forward(batch_states, weights_pred)
+                    loss = F.mse_loss(actions_prey, batch_actions)
 
-                loss = F.mse_loss(actions, batch_actions)
                 total_val_loss += loss.item() * batch_states.size(0)
 
         avg_val_loss = total_val_loss / val_size
@@ -326,7 +331,7 @@ def pretrain_policy_with_validation(policy, expert_buffer, role, val_ratio=0.2, 
         if role == 'predator':
             print(f"[{role.upper()}] Epoch {epoch:02d} | Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f}")
         else:
-            print(f"[{role.upper()}] Epoch {epoch:02d} | Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f} | Pred Gain: {gain}")
+            print(f"[{role.upper()}] Epoch {epoch:02d} | Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f} | Pred Gain: {pred_gain[0]}")
             
         if early_stopping:
             if avg_val_loss > avg_train_loss:

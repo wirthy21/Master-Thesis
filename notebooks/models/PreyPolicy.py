@@ -3,27 +3,26 @@ sys.path.insert(0, os.path.abspath('..'))
 
 import math
 import torch
+import scipy.stats
 import torch.nn as nn
 from utils.es_utils import *
 from utils.env_utils import *
 import torch.nn.functional as F
 from torch.distributions import Normal
 from multiprocessing import Pool, set_start_method
-from models.ModularNetworks import PairwiseInteraction, Attention, PredatorInteraction, PredatorAttention
+from models.ModularNetworks import PairwiseInteraction, Attention, PredatorInteraction
 
 
 class PreyPolicy(nn.Module):
     def __init__(self, features=4, gain=0.0):
         super(PreyPolicy, self).__init__()
-        self.pred_gain = nn.Parameter(torch.tensor(gain))
 
         self.prey_pairwise = PairwiseInteraction(features)
         self.prey_attention = Attention(features)
 
         self.pred_pairwise = PredatorInteraction(features)
-        self.pred_attention = PredatorAttention(features)
 
-    def forward(self, states):
+    def forward(self, states, pred_attention_weights=None):
         agents, neigh, feat = states.shape                  # Shape: (32,32,4)
 
         device = states.device
@@ -34,9 +33,12 @@ class PreyPolicy(nn.Module):
         mu_pred, sigma_pred = self.pred_pairwise(pred_states)       # mu=32, simga=32
         sampled_pred_action = Normal(mu_pred, sigma_pred).sample()  # actions=32
         pred_actions = torch.tanh(sampled_pred_action) * math.pi    # Value Range [-pi:pi]
+        pred_action_flat = pred_actions.squeeze(-1)
 
-        pred_weight_logits = self.pred_attention(pred_states)       # weights=32
-        pred_weights = torch.softmax(pred_weight_logits, dim=1)          
+        if pred_attention_weights is not None:
+            pred_gain = pred_attention_weights.mean(dim=1)
+        else:
+            pred_gain = torch.full((agents,), 1/33, device=states.device, dtype=states.dtype) # treat every action equal
 
         ##### Prey #####
         prey_states = states[:, 1:, :]                                      # Shape: (32,31,4)
@@ -52,18 +54,12 @@ class PreyPolicy(nn.Module):
 
         ##### Action Aggregation #####
 
-        # Ensure gain is positive
-        pred_gain = torch.sigmoid(self.pred_gain)
-
-        # Aggregation of Predator Actions per Prey
-        pred_action_per_prey = (pred_actions * pred_weights).sum(dim=1)
-
         # Aggregation of Prey Actions per Prey
         prey_actions_nei = prey_actions.squeeze(-1)
         prey_weights_nei = prey_weights.squeeze(-1)
         prey_action_per_prey = (prey_actions_nei * prey_weights_nei).sum(dim=1)
 
-        final_action = pred_gain * pred_action_per_prey + (1.0 - pred_gain) * prey_action_per_prey
+        final_action = pred_gain * pred_action_flat + (1.0 - pred_gain) * prey_action_per_prey
 
         ##### Logging #####
 
@@ -74,7 +70,7 @@ class PreyPolicy(nn.Module):
         # Predator index 0
         mu_full[:, 0, :] = mu_pred 
         sigma_full[:, 0, :] = sigma_pred 
-        weights_full[:, 0, :] = pred_weights
+        weights_full[:, 0, :] = 1 # pred_weight always 1, due to 1:1 relationship
 
         # Prey indices 1..
         mu_full[:, 1:, :] = mu_prey.view(agents, neigh-1, 1)
@@ -90,19 +86,17 @@ class PreyPolicy(nn.Module):
 
 
     def update(self, role, network,
-            pred_count, prey_count, action_count,
-            pred_policy, prey_policy,
-            pred_discriminator, prey_discriminator, 
-            num_perturbations, generation,
-            lr_pred_policy, lr_prey_policy,
-            sigma, gamma, clip_length, use_walls, start_frame_pool):
+               pred_policy, prey_policy,
+               pred_discriminator, prey_discriminator, 
+               num_perturbations, generation, lr,
+               sigma, clip_length, use_walls, start_frame_pool):
 
-        if role == "predator":
-            module = self.pred_pairwise if network == "pairwise" else self.pred_attention
-            lr = lr_pred_policy
-        else:
-            module = self.prey_pairwise if network == "pairwise" else self.prey_attention
-            lr = lr_prey_policy
+        if network == "prey_pairwise":
+            module = self.prey_pairwise
+        elif network == "prey_attention":
+            module = self.prey_attention
+        elif network == "pred_pairwise":
+            module = self.pred_pairwise
 
         theta = nn.utils.parameters_to_vector(module.parameters()).detach().clone()
         dim = theta.numel()
@@ -118,30 +112,27 @@ class PreyPolicy(nn.Module):
 
         epsilons = [torch.randn(dim, device=theta.device) * sigma for _ in range(num_perturbations)]
 
-        tasks = [(module, theta, eps,
-                pred_count, prey_count, action_count,
-                pred_policy, prey_policy,
-                pred_discriminator, prey_discriminator, role,
-                clip_length, use_walls, start_frame_pool)
-                for eps in epsilons]
+        tasks = [(module, theta, eps, pred_policy, prey_policy, pred_discriminator, prey_discriminator, 
+                  role, clip_length, use_walls, start_frame_pool) for eps in epsilons]
 
         results = pool.map(apply_perturbation, tasks)
 
-        stacked_diffs = torch.tensor(results, device=theta.device)
-        diff_min = stacked_diffs.min().item()
-        diff_max = stacked_diffs.max().item()
-        mean = stacked_diffs.mean()
-        std  = stacked_diffs.std(unbiased=False) + 1e-8
-        normed = (stacked_diffs - mean) / std
+        stacked_results = torch.tensor(results, device=theta.device)
+        ranked_diffs = scipy.stats.rankdata(stacked_results)
+        diff_min = ranked_diffs.min().item()
+        diff_max = ranked_diffs.max().item()
+        mean = ranked_diffs.mean()
+        std  = ranked_diffs.std()
+        normed = (ranked_diffs - mean) / (std + 1e-8) # normalize to stabilise variance
 
         theta_new = gradient_estimate(theta, normed, dim, epsilons, sigma, lr, num_perturbations)
 
         grad_norm = (theta_new - theta).norm().item()
 
         metrics.append({"generation": generation,
-                        "avg_reward_diff": mean.item(),
                         "diff_min": diff_min,
                         "diff_max": diff_max,
+                        "diff_mean": mean.item(),
                         "diff_std": std.item(),
                         "sigma": sigma,
                         "lr": lr,

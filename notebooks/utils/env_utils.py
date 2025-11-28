@@ -53,7 +53,7 @@ def get_features(global_state, max_speed=15.0):
 
 
 
-def continuous_to_discrete(actions, action_count, role="predator"):
+def continuous_to_discrete(actions, action_count=360, role="predator"):
     low, high = -math.pi, math.pi
     scaled = (actions - low) * (action_count - 1) / (high - low)
     discrete_action = scaled.round().long().clamp(0, action_count - 1)
@@ -81,7 +81,7 @@ def parallel_get_rollouts(env, pred_policy=None, prey_policy=None, clip_length=3
         dis_pred = continuous_to_discrete(action_pred, 360, role='predator')
 
         prey_states = prey_tensor[..., :4]
-        action_prey, mu_prey, sigma_prey, weights_prey, pred_gain = prey_policy.forward(prey_states)
+        action_prey, mu_prey, sigma_prey, weights_prey, pred_gain = prey_policy.forward(prey_states, weights_pred)
         dis_prey = continuous_to_discrete(action_prey, 360, role='prey')
 
         action_dict = {}
@@ -101,26 +101,18 @@ def parallel_get_rollouts(env, pred_policy=None, prey_policy=None, clip_length=3
 
 
 # One env for each thread
-def make_env(predator_count=1, prey_count=32, action_count=360, use_walls=True, start_frame_pool=None):
-    env = parallel_env(predator_count=predator_count, prey_count=prey_count, action_count=action_count, use_walls=use_walls)
+def make_env(use_walls=True, start_frame_pool=None):
+    env = parallel_env(use_walls=use_walls)
     positions = start_frame_pool.sample(n=1)
     obs, infos = env.reset(options=positions)
     return env
 
 
-def generate_trajectories(buffer, start_frame_pool, pred_count, prey_count, action_count, pred_policy, prey_policy, clip_length=100, num_generative_episodes=1, use_walls=True):
+def generate_trajectories(buffer, start_frame_pool, pred_policy, prey_policy, clip_length=30, num_generative_episodes=1, use_walls=True):
 
     with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-        futures = [
-            executor.submit(
-                parallel_get_rollouts,
-                make_env(predator_count=pred_count, prey_count=prey_count, action_count=action_count, use_walls=use_walls, start_frame_pool=start_frame_pool),
-                pred_policy,
-                prey_policy,
-                clip_length
-            )
-            for i in range(num_generative_episodes)
-        ]
+        futures = [executor.submit(parallel_get_rollouts, make_env(use_walls=use_walls, start_frame_pool=start_frame_pool), 
+                                   pred_policy, prey_policy, clip_length) for i in range(num_generative_episodes)]
 
     successful = 0
     for future in as_completed(futures):
@@ -132,6 +124,6 @@ def generate_trajectories(buffer, start_frame_pool, pred_count, prey_count, acti
             continue
     missing = num_generative_episodes - successful
     if missing > 0:
-        generate_trajectories(buffer, pred_count, prey_count, action_count,
-                            pred_policy, prey_policy,
-                            clip_length, num_generative_episodes=missing)
+        generate_trajectories(buffer=buffer, start_frame_pool=start_frame_pool,
+                              pred_policy=pred_policy, prey_policy=prey_policy,
+                              clip_length=clip_length, num_generative_episodes=missing, use_walls=use_walls)

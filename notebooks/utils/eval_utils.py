@@ -13,6 +13,11 @@ import matplotlib.image as mpimg
 import matplotlib.colors as colors
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 
+
+#############################
+##### POLICY EVALUATION #####
+#############################
+
 # height, width = 800, 800
 # v_predator = 5.0
 # v_prey = 4.0
@@ -468,6 +473,10 @@ def plot_pred_prey_metrics(gail_metrics, bc_metrics, couzin_metrics, expert_metr
     plt.show()
 
 
+##########################
+##### ATTENTION MAPS #####
+##########################
+
 
 def compute_pin_an_maps(pin, an, role, v=1.0,
                         x_range=(-150, 150),  y_range=(-150, 150),
@@ -554,12 +563,10 @@ def plot_policy_maps(xs, ys, action_map, attn_map, role="predator", img_path=Non
     plt.show()
 
 
+####################################
+##### Discriminator Evaluation #####
+####################################
 
-
-
-
-
-#################################################################
 
 def evaluate_discriminator(dis_metrics_pred, dis_metrics_prey):
 
