@@ -18,7 +18,7 @@ def discriminator_reward(pred_tensors, prey_tensors, pred_discriminator, prey_di
 
 
 def gradient_estimate(theta, rewards_norm, dim, epsilons, sigma, lr, num_pertubations):
-    grad = torch.zeros(dim)
+    grad = torch.zeros(dim, device=theta.device)
     for eps, r in zip(epsilons, rewards_norm):
         grad += eps * r
 

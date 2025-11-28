@@ -7,17 +7,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # [Agent, scaled_position_x, scaled_position_y, scaled_direction (-180:180), scaled_speed]
 
-def get_features(global_state):
+def get_features(global_state, max_speed=15.0):
     sorted_gs = dict(sorted(global_state.items()))
     items = list(sorted_gs.items())
     agents, raw = zip(*items)
 
     n = len(raw)
 
-    xs = np.fromiter((r[1] for r in raw), dtype=np.float32, count=n) # [0, width]
-    ys = np.fromiter((r[2] for r in raw), dtype=np.float32, count=n) # [0, height]
+    xs = np.fromiter((r[1] for r in raw), dtype=np.float32, count=n) # [0, 1]
+    ys = np.fromiter((r[2] for r in raw), dtype=np.float32, count=n) # [0, 1]
     directions = np.fromiter((r[3] for r in raw), dtype=np.float32, count=n) # [0, 1]
-    speeds = np.fromiter((r[4] for r in raw), dtype=np.float32, count=n) # [0, max_speed]
+    speeds_norm = np.fromiter((r[4] for r in raw), dtype=np.float32, count=n) # [0, 1]
+    speeds = speeds_norm * max_speed  # [0, max_speed] to align with expert
     
     thetas = (directions - 0.5) * (2 * np.pi)     # [-pi, pi]
     thetas_norm = thetas / np.pi # convert to [-1,1]
@@ -28,12 +29,15 @@ def get_features(global_state):
     vys = sin_t * speeds
 
     # pairwise distances
-    dx = xs[None, :] - xs[:, None] # range [-1,1]
-    dy = ys[None, :] - ys[:, None] # range [-1,1]
+    dx = xs[None, :] - xs[:, None]  # [-1, 1]
+    dy = ys[None, :] - ys[:, None]  # [-1, 1]
 
     # relative velocities
     rel_vx = cos_t[:, None] * vxs[None, :] + sin_t[:, None] * vys[None, :] # range [-1,1]
     rel_vy = -sin_t[:, None] * vxs[None, :] + cos_t[:, None] * vys[None, :] # range [-1,1]
+
+    rel_vx = np.clip(rel_vx, -max_speed, max_speed) / max_speed # range [-1,1]
+    rel_vy = np.clip(rel_vy, -max_speed, max_speed) / max_speed # range [-1,1]
     
     n = xs.shape[0]
     thetas_mat = np.tile(thetas_norm[:, None], (1, n))

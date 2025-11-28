@@ -109,7 +109,7 @@ def find_valid_windows(filtered_frames, num_frames=9, total_detections=33):
     return full_track_windows, valid_windows
 
 
-def get_expert_features(frame, width, height, max_speed=25):    
+def get_expert_features(frame, width, height, max_speed=15):    
     frame = sorted(frame, key=lambda det: det['label'] != '1') # sort so that Pred Head is always first
 
     vscale = np.vectorize(scale)
@@ -120,11 +120,11 @@ def get_expert_features(frame, width, height, max_speed=25):
     clipped_xs = np.clip(xs, 0, width)
     clipped_ys = np.clip(ys, 0, height)
 
-    scaled_xs = vscale(clipped_xs, 0, width, 0, 1)
-    scaled_ys = vscale(clipped_ys, 0, height, 0, 1)
+    scaled_xs = vscale(clipped_xs, 0, width, 0, 1) # [0, 1]
+    scaled_ys = vscale(clipped_ys, 0, height, 0, 1) # [0, 1]
 
-    vxs = np.array([det['vx'] for det in frame])
-    vys = np.array([det['vy'] for det in frame])
+    vxs = np.array([det['vx'] for det in frame]) # Range [-10.961784489688785 : 13.193770118386169]
+    vys = np.array([det['vy'] for det in frame]) # Range [-9.267164570677894 : 11.038460817819471]
 
     thetas = np.array([det['angle'] for det in frame])
     scaled_thetas = vscale(thetas, -np.pi, np.pi, -1, 1)
@@ -133,18 +133,15 @@ def get_expert_features(frame, width, height, max_speed=25):
     sin_t = np.sin(thetas)
 
     # pairwise distances
-    dx = scaled_xs[None, :] - scaled_xs[:, None]
-    dy = scaled_ys[None, :] - scaled_ys[:, None]
+    dx = scaled_xs[None, :] - scaled_xs[:, None] # [-1, 1]
+    dy = scaled_ys[None, :] - scaled_ys[:, None] # [-1, 1]
 
     # relative velocities
     rel_vx = cos_t[:, None] * vxs[None, :] + sin_t[:, None] * vys[None, :]
     rel_vy = -sin_t[:, None] * vxs[None, :] + cos_t[:, None] * vys[None, :]
 
-    clipped_vx = np.clip(rel_vx, -max_speed, max_speed)
-    clipped_vy = np.clip(rel_vy, -max_speed, max_speed)
-
-    scaled_rel_vx = vscale(clipped_vx, -max_speed, max_speed, -1, 1)
-    scaled_rel_vy = vscale(clipped_vy, -max_speed, max_speed, -1, 1)
+    scaled_rel_vx = np.clip(rel_vx, -max_speed, max_speed) / max_speed
+    scaled_rel_vy = np.clip(rel_vy, -max_speed, max_speed) / max_speed
 
     n = scaled_xs.shape[0]
     thetas_mat = np.tile(scaled_thetas[:, None], (1, n))
@@ -156,10 +153,10 @@ def get_expert_features(frame, width, height, max_speed=25):
     pred_tensor = torch.from_numpy(neigh[0]).unsqueeze(0)
     prey_tensor = torch.from_numpy(neigh[1:]) # shape (N-1, N-1, 5)
 
-    return pred_tensor, prey_tensor, xs, ys, vxs, vys
+    return pred_tensor, prey_tensor, scaled_xs, scaled_ys, vxs, vys
 
 
-def get_expert_tensors(full_track_windows, valid_windows, width, height, max_speed=25, window_size=9):
+def get_expert_tensors(full_track_windows, valid_windows, width, height, max_speed=15, window_size=1):
     if len(valid_windows) == 0:
         empty_metrics = {"xs": [], "ys": [], "vxs": [], "vys": []}
         return torch.empty(0), torch.empty(0), empty_metrics
@@ -184,9 +181,7 @@ def get_expert_tensors(full_track_windows, valid_windows, width, height, max_spe
         vys_all = []
 
         for dets in window_detections:
-            pred_tensor, prey_tensor, xs_frame, ys_frame, vxs_frame, vys_frame = get_expert_features(
-                dets, width, height, max_speed
-            )
+            pred_tensor, prey_tensor, xs_frame, ys_frame, vxs_frame, vys_frame = get_expert_features(dets, width, height, max_speed)
 
             preds.append(pred_tensor)
             preys.append(prey_tensor)

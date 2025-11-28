@@ -10,6 +10,7 @@ from cycler import cycler
 from numpy.linalg import *
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+from utils.eval_utils import compute_polarization, compute_angular_momentum, degree_of_sparsity, distance_to_predator, escape_alignment
 
 # https://github.com/hossein-haeri/couzin_swarm_model/blob/master/swarm_pray_predator.py
 
@@ -69,7 +70,7 @@ def enforce_walls(agent, area_width, area_height):
 
 def run_couzin_simulation(visualization='on', dimension='2d', n=32, max_steps=1000, dt=0.5, free_offset=10, number_of_sharks=1, alpha=0.1, 
                           r_r=2, r_o=10, r_a=40, r_thr=30, r_lethal=1, field_of_view=3*np.pi/2, field_of_view_shark=2*np.pi, theta_dot_max=0.5, 
-                          theta_dot_max_shark=0.3, constant_speed=2, shark_speed=5, area_width=50, area_height=50, area_depth=50):
+                          theta_dot_max_shark=0.3, constant_speed=15, shark_speed=15, area_width=2160, area_height=2160, area_depth=50):
     start = time.time()
 
     swarm = [Agent(i, constant_speed, area_width, area_height, area_depth, dimension=dimension) for i in range(n)]
@@ -268,30 +269,31 @@ def run_couzin_simulation(visualization='on', dimension='2d', n=32, max_steps=10
 
         t += 1
 
-    final_pred_tensor = np.zeros((max_steps, number_of_sharks, n, 5), dtype=np.float32)
-    final_prey_tensor = np.zeros((max_steps, n, n, 5), dtype=np.float32)
+    final_pred_tensor = torch.zeros((max_steps, number_of_sharks, n, 5), dtype=torch.float32)
+    final_prey_tensor = torch.zeros((max_steps, n, n, 5), dtype=torch.float32)
+    metrics = []
 
-    for t in range(max_steps): 
-        final_pred_tensor[t], final_prey_tensor[t] = get_features_from_logs(prey_log[t], predator_log[t], area_width,area_height,constant_speed,shark_speed)
+    for step in range(max_steps):
+        prey_log_step = prey_log[step]
+        shark_log_step = predator_log[step]
+        pred_tensor_step, prey_tensor_step, metric_step = get_features_from_logs(prey_log_step, shark_log_step, area_width, area_height, constant_speed, shark_speed)
 
-    return final_pred_tensor, final_prey_tensor, predator_log, prey_log
+        final_pred_tensor[step] = pred_tensor_step
+        final_prey_tensor[step] = prey_tensor_step
+        metrics.append(metric_step)
+
+    return final_pred_tensor, final_prey_tensor, metrics
 
 
-def get_features_from_logs(
-    prey_log_step,
-    shark_log_step,
-    area_width,
-    area_height,
-    constant_speed,
-    shark_speed,
-):
+def get_features_from_logs(prey_log_step, shark_log_step, area_width, area_height, constant_speed, shark_speed):
+
     combined = np.vstack([shark_log_step, prey_log_step])
     N = combined.shape[0]
 
-    xs    = combined[:, 0].astype(np.float32)
-    ys    = combined[:, 1].astype(np.float32)
-    vxs   = combined[:, 2].astype(np.float32)
-    vys   = combined[:, 3].astype(np.float32)
+    xs = combined[:, 0].astype(np.float32)
+    ys = combined[:, 1].astype(np.float32)
+    vxs = combined[:, 2].astype(np.float32)
+    vys = combined[:, 3].astype(np.float32)
     dir_x = combined[:, 4].astype(np.float32)
     dir_y = combined[:, 5].astype(np.float32)
 
@@ -314,13 +316,34 @@ def get_features_from_logs(
     rel_vy = np.clip(rel_vy, -max_speed, max_speed) / max_speed
 
     theta_mat = np.tile(theta_norm[:, None], (1, N))
-
     features = np.stack([dx, dy, rel_vx, rel_vy, theta_mat], axis=-1)
 
     mask = ~np.eye(N, dtype=bool)
-    neigh = features[mask].reshape(N, N-1, 5)
+    neigh = features[mask].reshape(N, N - 1, 5)
 
     pred_tensor = torch.from_numpy(neigh[0]).unsqueeze(0)
     prey_tensor = torch.from_numpy(neigh[1:])
 
-    return pred_tensor, prey_tensor
+    polarization = compute_polarization(vxs, vys)
+    angular_momentum_val = compute_angular_momentum(xs_scaled, ys_scaled, vxs, vys)
+    sparsity = degree_of_sparsity(xs_scaled, ys_scaled)
+    dist_pred = distance_to_predator(xs_scaled, ys_scaled)
+    escape_align = escape_alignment(xs_scaled, ys_scaled, vxs, vys)
+
+    metrics = {
+        "polarization": polarization,
+        "angular_momentum": angular_momentum_val,
+        "degree_of_sparsity": sparsity,
+        "distance_to_predator": dist_pred,
+        "escape_alignment": escape_align,
+        "xs": xs_scaled,
+        "ys": ys_scaled,
+        "dx": dx,
+        "dy": dy,
+        "vxs": vxs,
+        "vys": vys,
+        "features": features,
+    }
+
+    return pred_tensor, prey_tensor, metrics
+
