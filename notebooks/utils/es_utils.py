@@ -23,6 +23,12 @@ def gradient_estimate(theta, rewards_norm, dim, epsilons, sigma, lr, num_perturb
         grad += eps * r
 
     theta_est = theta + (lr /  (2 * sigma**2 * num_perturbations)) * grad
+
+    if torch.rand(1).item() < 0.01:
+        print("[DEBUG|ES] rewards_norm mean/std:",
+              rewards_norm.mean().item(), rewards_norm.std().item())
+        print("           grad norm:", grad.norm().item())
+
     return theta_est
 
 
@@ -49,6 +55,12 @@ def apply_perturbation(args):
 
         pred_reward_diff = (reward_pred_pos - reward_pred_neg).detach().item()
 
+        if torch.rand(1).item() < 0.01:
+            print("[DEBUG|apply_perturbation|pred]")
+            print("  reward_pos:", reward_pred_pos.item(),
+                  "reward_neg:", reward_pred_neg.item(),
+                  "diff:", pred_reward_diff)
+
         return pred_reward_diff
 
     else:
@@ -68,6 +80,12 @@ def apply_perturbation(args):
         nn.utils.vector_to_parameters(theta, module.parameters())
 
         prey_reward_diff = (reward_prey_pos - reward_prey_neg).detach().item()
+
+        if torch.rand(1).item() < 0.01:
+            print("[DEBUG|apply_perturbation|prey]")
+            print("  reward_pos:", reward_prey_pos.item(),
+                  "reward_neg:", reward_prey_neg.item(),
+                  "diff:", prey_reward_diff)
 
         return prey_reward_diff
 

@@ -34,6 +34,15 @@ class PredatorPolicy(nn.Module):
 
         # Action Calculation
         action = (actions * weights).sum(dim=1)
+
+        #if torch.rand(1).item() < 0.002:
+        #    print("\n[DEBUG|PredPolicy.forward]")
+        #    print(f"  actions mean/std: {actions.mean().item():.3f} / {actions.std().item():.3f}")
+        #    print(f"  action(agg) mean/std: {action.mean().item():.3f}")
+        #    print(f"  mu mean/std: {mu.mean().item():.3f} / {mu.std().item():.3f}")
+        #    print(f"  sigma mean/std: {sigma.mean().item():.3f} / {sigma.std().item():.3f}")
+        #    print(f"  weights min/max: {weights.min().item():.3f} / {weights.max().item():.3f}")
+
         return action, mu, sigma, weights
     
 
@@ -66,24 +75,29 @@ class PredatorPolicy(nn.Module):
 
         stacked_results = torch.tensor(results, device=theta.device)
         ranked_diffs = scipy.stats.rankdata(stacked_results)
-        diff_min = ranked_diffs.min().item()
-        diff_max = ranked_diffs.max().item()
-        mean = ranked_diffs.mean()
-        std  = ranked_diffs.std()
-        normed = (ranked_diffs - mean) / (std + 1e-8) # normalize to stabilise variance
+        diff_min = stacked_results.min().item()
+        diff_max = stacked_results.max().item()
+        diff_mean = stacked_results.mean().item()
+        diff_std = stacked_results.std().item()
+        normed = (ranked_diffs - diff_mean) / (diff_std + 1e-8) # normalize to stabilise variance
 
         theta_new = gradient_estimate(theta, normed, dim, epsilons, sigma, lr, num_perturbations)
 
         grad_norm = (theta_new - theta).norm().item()
 
         metrics.append({"generation": generation,
-                        "diff_min": diff_min,
-                        "diff_max": diff_max,
-                        "diff_mean": mean.item(),
-                        "diff_std": std.item(),
+                        "reward_min": diff_min,
+                        "reward_max": diff_max,
+                        "reward_mean": diff_mean,
+                        "reward_std": diff_std,
                         "sigma": sigma,
                         "lr": lr,
                         "grad_norm": grad_norm})
+
+
+
+        #if generation % 5 == 0:
+        #    print(f"\n[DEBUG|{role}|{network}] grad_norm: {grad_norm:.3f} | r_mean: {diff_mean:.3f} | r_std:  {diff_std:.3f} | r_max:  {diff_max:.3f}, r_min:  {diff_min:.3f}")
 
         # update
         nn.utils.vector_to_parameters(theta_new, module.parameters())

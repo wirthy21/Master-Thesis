@@ -66,7 +66,7 @@ def get_eval_features(global_state, max_speed=15.0):
     pred_tensor = torch.from_numpy(neigh[0]).unsqueeze(0)
     prey_tensor = torch.from_numpy(neigh[1:]) 
     
-    return pred_tensor, prey_tensor, xs, ys, dx, dy, vxs, vys
+    return pred_tensor, prey_tensor, xs, ys, directions, dx, dy, vxs, vys
 
 
 def plot_pretraining(logs_pretrain_pred, logs_pretrain_prey):
@@ -247,8 +247,8 @@ def run_policies(env, pred_policy, prey_policy, render=True):
         dis_pred = continuous_to_discrete(action_pred, 360, role='predator')
 
         prey_states = prey_tensor[..., :4]
-        action_prey, mu_prey, sigma_prey, weights_prey, pred_gain = prey_policy.forward(prey_states)
-        dis_prey = continuous_to_discrete(action_prey, 360, role='prey')
+        agg_action, action_prey, mu_prey, sigma_prey, weights_prey, pred_gain = prey_policy.forward(prey_states)
+        dis_prey = continuous_to_discrete(agg_action, 360, role='prey')
 
         # Action dictionary
         action_dict = {'predator_0': dis_pred}
@@ -265,6 +265,7 @@ def run_policies(env, pred_policy, prey_policy, render=True):
             "distance_to_predator": distance_to_predator(xs, ys),
             "escape_alignment": escape_alignment(xs, ys, vxs, vys),
             "actions": (dis_pred, dis_prey),
+            "agg_actions": agg_action,
             "mu": (mu_pred, mu_prey),
             "sigma": (sigma_pred, sigma_prey),
             "weights": (weights_pred, weights_prey),
@@ -478,7 +479,7 @@ def plot_pred_prey_metrics(gail_metrics, bc_metrics, couzin_metrics, expert_metr
 ##########################
 
 
-def compute_pin_an_maps(pin, an, role, v=1.0,
+def compute_pin_an_maps2(pin, an, role, v=1.0,
                         x_range=(-150, 150),  y_range=(-150, 150),
                         n_points=80, n_orient=72, device="cpu"):
 
@@ -518,7 +519,7 @@ def compute_pin_an_maps(pin, an, role, v=1.0,
 
 
 
-def plot_policy_maps(xs, ys, action_map, attn_map, role="predator", img_path=None):
+def plot_policy_maps2(xs, ys, action_map, attn_map, role="predator", img_path=None):
 
     cmap_pin_color = "inferno"
     cmap_an_color = "RdBu"
@@ -643,15 +644,15 @@ def evaluate_es(es_metrics_pred, es_metrics_prey):
 
         # Pairwise Update
         ax = axes[0, col]
-        ax.plot(gens, pair_df['avg_reward_diff'], label='Reward')
+        ax.plot(gens, pair_df['reward_mean'], label='Reward')
         ax.fill_between(
             gens,
-            pair_df['avg_reward_diff'] - pair_df['diff_std'],
-            pair_df['avg_reward_diff'] + pair_df['diff_std'],
+            pair_df['reward_mean'] - pair_df['reward_std'],
+            pair_df['reward_mean'] + pair_df['reward_std'],
             alpha=0.2,
             label='Std'
         )
-        coeffs_p = np.polyfit(gens, pair_df['avg_reward_diff'], 1)
+        coeffs_p = np.polyfit(gens, pair_df['reward_mean'], 1)
         ax.plot(gens, np.poly1d(coeffs_p)(gens), linestyle='--', label='Regression')
         slope_p = coeffs_p[0]
         ax.set_title(f'Pairwise-Interaction Network\nSlope: {slope_p:.4f}')
@@ -664,15 +665,15 @@ def evaluate_es(es_metrics_pred, es_metrics_prey):
 
         # Attention Update
         ax = axes[1, col]
-        ax.plot(gens, att_df['avg_reward_diff'], label='Reward')
+        ax.plot(gens, att_df['reward_mean'], label='Reward')
         ax.fill_between(
             gens,
-            att_df['avg_reward_diff'] - att_df['diff_std'],
-            att_df['avg_reward_diff'] + att_df['diff_std'],
+            att_df['reward_mean'] - att_df['reward_std'],
+            att_df['reward_mean'] + att_df['reward_std'],
             alpha=0.2,
             label='Std'
         )
-        coeffs_a = np.polyfit(gens, att_df['avg_reward_diff'], 1)
+        coeffs_a = np.polyfit(gens, att_df['reward_mean'], 1)
         ax.plot(gens, np.poly1d(coeffs_a)(gens), linestyle='--', label='Regression')
         slope_a = coeffs_a[0]
         ax.set_title(f'Attention Network\nSlope: {slope_a:.4f}')

@@ -29,14 +29,14 @@ class PreyPolicy(nn.Module):
         dtype  = states.dtype
 
         ##### Predator #####
-        pred_states = states[:, 0, :]                               # Shape: (32,1,4)
+        pred_states = states[:, 0, :]                               # Shape: (32,4)
         mu_pred, sigma_pred = self.pred_pairwise(pred_states)       # mu=32, simga=32
         sampled_pred_action = Normal(mu_pred, sigma_pred).sample()  # actions=32
         pred_actions = torch.tanh(sampled_pred_action) * math.pi    # Value Range [-pi:pi]
         pred_action_flat = pred_actions.squeeze(-1)
 
         if pred_attention_weights is not None:
-            pred_gain = pred_attention_weights.mean(dim=1)
+            pred_gain = pred_attention_weights.view(agents)
         else:
             pred_gain = torch.full((agents,), 1/33, device=states.device, dtype=states.dtype) # treat every action equal
 
@@ -45,7 +45,7 @@ class PreyPolicy(nn.Module):
         prey_states_flat   = prey_states.reshape(agents * (neigh-1), feat)  # Shape: (32*31,4)
 
         mu_prey, sigma_prey = self.prey_pairwise(prey_states_flat)          # mu=32*31, simga=32*31
-        sampled_prey_action = Normal(mu_prey, sigma_prey).sample()          # actions=32*31
+        sampled_prey_action = Normal(mu_prey, sigma_prey).rsample()          # actions=32*31
         prey_actions = (torch.tanh(sampled_prey_action) * math.pi).view(agents, neigh - 1, 1)
 
         prey_weight_logits = self.prey_attention(prey_states_flat)
@@ -82,7 +82,17 @@ class PreyPolicy(nn.Module):
         sigma_log = sigma_full.squeeze(-1)
         weights_log = weights_full.squeeze(-1)
 
-        return final_action, mu_log, sigma_log, weights_log, pred_gain
+        #if torch.rand(1).item() < 0.002:
+        #    print("\n[DEBUG|PreyPolicy.forward]")
+        #    print(f"  final_action mean/std: {final_action.mean().item():.3f} / {final_action.std().item():.3f}")
+        #    print(f"  prey_action_per_prey mean/std: {prey_action_per_prey.mean().item():.3f} / {prey_action_per_prey.std().item():.3f}")
+        #    print(f"  mu_prey mean/std: {mu_prey.mean().item():.3f} / {mu_prey.std().item():.3f}")
+        #    print(f"  sigma_prey mean/std: {sigma_prey.mean().item():.3f} / {sigma_prey.std().item():.3f}")
+        #    print(f"  prey_weights min/max: {prey_weights.min().item():.3f} / {prey_weights.max().item():.3f}")
+        #    print(f"  pred_gain min/mean/max: {pred_gain.min().item():.3f} / {pred_gain.mean().item():.3f} / {pred_gain.max().item():.3f}")
+
+
+        return final_action, prey_action_per_prey, mu_log, sigma_log, weights_log, pred_gain
 
 
     def update(self, role, network,
@@ -119,24 +129,27 @@ class PreyPolicy(nn.Module):
 
         stacked_results = torch.tensor(results, device=theta.device)
         ranked_diffs = scipy.stats.rankdata(stacked_results)
-        diff_min = ranked_diffs.min().item()
-        diff_max = ranked_diffs.max().item()
-        mean = ranked_diffs.mean()
-        std  = ranked_diffs.std()
-        normed = (ranked_diffs - mean) / (std + 1e-8) # normalize to stabilise variance
+        diff_min = stacked_results.min().item()
+        diff_max = stacked_results.max().item()
+        diff_mean = stacked_results.mean().item()
+        diff_std  = stacked_results.std().item()
+        normed = (ranked_diffs - diff_mean) / (diff_std + 1e-8) # normalize to stabilise variance
 
         theta_new = gradient_estimate(theta, normed, dim, epsilons, sigma, lr, num_perturbations)
 
         grad_norm = (theta_new - theta).norm().item()
 
         metrics.append({"generation": generation,
-                        "diff_min": diff_min,
-                        "diff_max": diff_max,
-                        "diff_mean": mean.item(),
-                        "diff_std": std.item(),
+                        "reward_min": diff_min,
+                        "reward_max": diff_max,
+                        "reward_mean": diff_mean,
+                        "reward_std": diff_std,
                         "sigma": sigma,
                         "lr": lr,
                         "grad_norm": grad_norm})
+
+        #if generation % 5 == 0:
+        #    print(f"\n[DEBUG|{role}|{network}] grad_norm: {grad_norm:.3f} | r_mean: {diff_mean:.3f} | r_std:  {diff_std:.3f} | r_max:  {diff_max:.3f}, r_min:  {diff_min:.3f}")
 
         # update
         nn.utils.vector_to_parameters(theta_new, module.parameters())

@@ -280,9 +280,8 @@ def pretrain_policy_with_validation(policy, pred_policy=None, expert_buffer=None
                 actions_pred, mu_pred, sigma_pred, weights_pred = policy.forward(batch_states)
                 loss = F.mse_loss(actions_pred, batch_actions)
             else:
-                actions_pred, mu_pred, sigma_pred, weights_pred = pred_policy.forward(batch_states)
-                actions_prey, mu_prey, sigma_prey, weights_prey, pred_gain = policy.forward(batch_states, weights_pred)
-                print(pred_gain)
+                pred_gain_weights = get_pred_gain(batch_states, pred_policy)
+                agg_action, actions_prey, mu_prey, sigma_prey, weights_prey, pred_gain = policy.forward(batch_states, pred_gain_weights)
                 loss = F.mse_loss(actions_prey, batch_actions)
 
             optimizer.zero_grad()
@@ -315,8 +314,8 @@ def pretrain_policy_with_validation(policy, pred_policy=None, expert_buffer=None
                     actions_pred, mu_pred, sigma_pred, weights_pred = policy.forward(batch_states)
                     loss = F.mse_loss(actions_pred, batch_actions)
                 else:
-                    actions_pred, mu_pred, sigma_pred, weights_pred = pred_policy.forward(batch_states)
-                    actions_prey, mu_prey, sigma_prey, weights_prey, pred_gain_val = policy.forward(batch_states, weights_pred)
+                    pred_gain_weights = get_pred_gain(batch_states, pred_policy)
+                    agg_action, actions_prey, mu_prey, sigma_prey, weights_prey, pred_gain_val = policy.forward(batch_states, pred_gain_weights)
                     loss = F.mse_loss(actions_prey, batch_actions)
 
                 total_val_loss += loss.item() * batch_states.size(0)
