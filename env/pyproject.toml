@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "custom-marl-aquarium"
+version = "0.1.0"
+description = "Custom MARL Aquarium fork for my GAIL experiments"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[tool.black]
+line-length = 99
+
+[tool.isort]
+profile = "black"
+
+[tool.pyright]
+reportUnknownMemberType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownParameterType = "none"
+reportUnknownVariableType = "none"
+reportPrivateImportUsage = "none"
+reportMissingTypeStubs = false
