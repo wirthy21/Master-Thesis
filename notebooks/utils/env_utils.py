@@ -2,7 +2,8 @@ import os
 import math
 import torch
 import numpy as np
-from marl_aquarium.aquarium_v0 import parallel_env
+import custom_marl_aquarium
+#from marl_aquarium.aquarium_v0 import parallel_env
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # [Agent, scaled_position_x, scaled_position_y, scaled_direction (-180:180), scaled_speed]

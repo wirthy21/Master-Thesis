@@ -8,7 +8,7 @@ from utils.env_utils import *
 from utils.train_utils import *
 import matplotlib.pyplot as plt
 from scipy.spatial import cKDTree
-from marl_aquarium import aquarium_v0
+import custom_marl_aquarium
 import matplotlib.image as mpimg
 import matplotlib.colors as colors
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
@@ -233,6 +233,9 @@ def run_policies(env, pred_policy, prey_policy, render=True):
     if render:
         print("Press 'q' to end simulation.")
 
+    pred_policy.to("cpu")
+    prey_policy.to("cpu")
+
     metrics = []
 
     while True:
@@ -294,6 +297,9 @@ def run_policies(env, pred_policy, prey_policy, render=True):
 def run_policies_in_steps(env, pred_policy, prey_policy, steps=200, render=True):
     if render:
         print("Press 'q' to end simulation.")
+
+    pred_policy.to("cpu")
+    prey_policy.to("cpu")
 
     metrics = []
 

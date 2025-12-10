@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 from utils.env_utils import *
-from marl_aquarium.aquarium_v0 import parallel_env
+import custom_marl_aquarium
+#from marl_aquarium.aquarium_v0 import parallel_env
 
 
 def discriminator_reward(pred_tensors, prey_tensors, pred_discriminator, prey_discriminator, eps=1e-8):
