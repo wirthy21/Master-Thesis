@@ -38,14 +38,14 @@ class raw_env(ParallelEnv[str, Box, Discrete | None]):  # pylint: disable=C0103
         render_mode: str = "human",
         observable_walls: int = 2,
         use_walls: bool = True,
-        width: int = 800,
-        height: int = 800,
+        width: int = 2160,
+        height: int = 2160,
         caption: str = "Aquarium",
         fps: int = 60,
         max_time_steps: int = 3000,
-        action_count: int = 16,
+        action_count: int = 360,
         predator_count: int = 1,
-        prey_count: int = 16,
+        prey_count: int = 32,
         predator_observe_count: int = 1,
         prey_observe_count: int = 3,
         draw_force_vectors: bool = False,
@@ -57,7 +57,7 @@ class raw_env(ParallelEnv[str, Box, Discrete | None]):  # pylint: disable=C0103
         keep_prey_count_constant: bool = True,
         prey_radius: int = 20,
         prey_max_acceleration: float = 1,
-        prey_max_velocity: float = 4,
+        prey_max_velocity: float = 15,
         prey_view_distance: int = 100,
         prey_replication_age: int = 200,
         prey_max_steer_force: float = 0.6,
@@ -67,7 +67,7 @@ class raw_env(ParallelEnv[str, Box, Discrete | None]):  # pylint: disable=C0103
         max_prey_count: int = 20,
         predator_max_acceleration: float = 0.6,
         predator_radius: int = 30,
-        predator_max_velocity: float = 5,
+        predator_max_velocity: float =  15,
         predator_view_distance: int = 200,
         predator_max_steer_force: float = 0.6,
         predator_max_age: int = 3000,
@@ -751,7 +751,7 @@ class raw_env(ParallelEnv[str, Box, Discrete | None]):  # pylint: disable=C0103
         for death_position in self.death_positions:
             self.view.draw_circle_at_position(death_position, color, 4)
 
-    def get_desired_velocity_from_action(self, action: int, animal: Entity):
+        '''    def get_desired_velocity_from_action(self, action: int, animal: Entity):
         """Returns the desired velocity from the given action"""
         max_velocity = 0
         if isinstance(animal, Predator):
@@ -761,7 +761,46 @@ class raw_env(ParallelEnv[str, Box, Discrete | None]):  # pylint: disable=C0103
         desired_velocity = get_vector_from_action(action, self.action_count)
         desired_velocity.normalize()
         desired_velocity.mult(max_velocity)
+        return desired_velocity'''
+
+
+    def get_desired_velocity_from_action(self, action: int, animal: Entity):
+        # 1) Max-Geschwindigkeit je nach Rolle
+        if isinstance(animal, Predator):
+            #print(f"[DEBUG] Predator {animal.id()} action={action}")
+            max_velocity = self.predator_max_velocity
+        else:
+            max_velocity = self.prey_max_velocity
+            #print(f"[DEBUG] Prey {animal.id()} action={action}")
+
+        # 2) Aktuelle Bewegungsrichtung aus der Velocity holen
+        #    -> damit ist 0° immer "dorthin, wo ich gerade schwimme"
+        if animal.velocity.mag() > 1e-8:
+            heading_rad = math.atan2(animal.velocity.y, animal.velocity.x)
+        else:
+            # Falls Velocity (fast) 0 ist: einfach nach oben schauen
+            heading_rad = -math.pi / 2
+
+        # 3) Diskrete Action (0..action_count-1) in relativen Turn-Winkel mappen
+        center = self.action_count // 2          # bei 360 → 180
+        raw_turn = action - center               # -180 .. +179
+
+        # wir wollen z.B. max. ±30° pro Schritt
+        max_turn_rad = math.radians(30.0)
+        turn_rad = (raw_turn / center) * max_turn_rad   # in [-30°, +30°] in Radiant
+
+        # 4) Neue Richtung = aktuelle Richtung + relativer Turn
+        new_heading = heading_rad + turn_rad
+
+        # 5) Desired Velocity in dieser Richtung mit konstanter Speed
+        vx = math.cos(new_heading)
+        vy = math.sin(new_heading)
+
+        desired_velocity = Vector(vx, vy)
+        desired_velocity.normalize()
+        desired_velocity.mult(max_velocity)
         return desired_velocity
+
 
     def get_rewards(self, catches: Collection[Any]):
         """Returns the rewards for all entities in the environment."""

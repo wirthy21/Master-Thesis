@@ -1,11 +1,19 @@
-ipython
-jupyterlab
-matplotlib
-notebook
-numpy
-pandas
-pip
-python-dotenv
-ruff
-scikit-learn
--e .
+numpy==1.26.4
+torch==2.6.0+cu124
+matplotlib==3.10.3
+pandas==2.3.1
+scipy==1.15.3
+opencv-python==4.12.0.88
+pillow==11.3.0
+tqdm==4.67.1
+optuna==4.4.0
+scikit-learn==1.7.1
+
+# Env
+gym==0.26.2
+gymnasium==0.28.1
+pettingzoo==1.24.2
+couzinswarm==0.0.3
+pygame==2.1.3
+
+custom-marl-aquarium @ git+https://github.com/wirthy21/Master-Thesis.git@main#subdirectory=env
