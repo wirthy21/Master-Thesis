@@ -13,10 +13,10 @@ from marl_aquarium.env.utils import scale
 
 # names: {0: 'Predator', 1: 'Predator Head', 2: 'Prey', 3: 'Prey Head'}
 
-def process_frame(cap, model, tracker, frame_idx):
+def process_frame(cap, model, tracker, frame_idx, device="cpu"):
     _, frame = cap.read()
     height, width = frame.shape[:2]
-    result = model(frame, verbose=False)[0]
+    result = model(frame, verbose=False, device=device)[0]
 
     xywh = result.boxes.xywh.cpu().numpy()
     confs = result.boxes.conf.cpu().numpy()
