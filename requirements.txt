@@ -5,6 +5,7 @@ scipy==1.15.3
 opencv-python==4.12.0.88
 pillow==11.3.0
 tqdm==4.67.1
+keyboard==0.13.5
 optuna==4.4.0
 scikit-learn==1.7.1
 
