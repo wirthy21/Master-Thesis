@@ -9,7 +9,6 @@ Instruction show a step by step installation using Anaconda.
 ```
 conda create -n GAIL python=3.10 -y
 conda activate GAIL
-conda install git -y
 ```
 
 2. Install CUDA enabled pytorch version
