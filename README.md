@@ -5,10 +5,11 @@ This is my Master Thesis Repository
 ## Environment Installation
 Instruction show a step by step installation using Anaconda.
 
-1. Create new conda environment
+1. Create new conda environment with git
 ```
 conda create -n GAIL python=3.10 -y
 conda activate GAIL
+conda install git -y
 ```
 
 2. Install CUDA enabled pytorch version
