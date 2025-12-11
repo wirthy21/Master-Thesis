@@ -7,13 +7,14 @@ Instruction show a step by step installation using Anaconda.
 
 1. Create new conda environment
 ```
-conda create -n GAIL python=3.10.18 -y
+conda create -n GAIL python=3.10 -y
 conda activate GAIL
 ```
 
 2. Install CUDA enabled pytorch version
 ```
-pip install torch==2.6.0+cu124 torchvision==0.7.0+cu124 torchaudio==0.6.0 --index-url https://download.pytorch.org/whl/cu124
+pip install "torch==2.6.0+cu124" --index-url https://download.pytorch.org/whl/cu124
+pip install "torchvision==0.21.0+cu124" --index-url https://download.pytorch.org/whl/cu124
 ```
 
 3. Install requirements
