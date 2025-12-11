@@ -3,8 +3,8 @@
 import random
 from typing import Tuple
 
-from marl_aquarium.env.animal import Entity
-from marl_aquarium.env.vector import Vector
+from custom_marl_aquarium.env.animal import Entity
+from custom_marl_aquarium.env.vector import Vector
 
 
 class Prey(Entity):

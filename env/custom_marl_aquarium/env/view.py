@@ -6,11 +6,11 @@ from typing import Tuple
 
 import pygame
 
-from marl_aquarium.env import utils
-from marl_aquarium.env.animal import Entity
-from marl_aquarium.env.predator import Predator
-from marl_aquarium.env.prey import Prey
-from marl_aquarium.env.vector import Vector
+from custom_marl_aquarium.env import utils
+from custom_marl_aquarium.env.animal import Entity
+from custom_marl_aquarium.env.predator import Predator
+from custom_marl_aquarium.env.prey import Prey
+from custom_marl_aquarium.env.vector import Vector
 
 
 class View:
@@ -33,10 +33,10 @@ class View:
         self.background = pygame.Surface(self.screen.get_size())
         self.background.fill(self.background_color)
 
-        with path("marl_aquarium.env.assets", "prey.png") as img_path:
+        with path("custom_marl_aquarium.env.assets", "prey.png") as img_path:
             self.fish_image = pygame.image.load(str(img_path))
             self.fish_image.convert()
-        with path("marl_aquarium.env.assets", "predator.png") as img_path:
+        with path("custom_marl_aquarium.env.assets", "predator.png") as img_path:
             self.shark_image = pygame.image.load(str(img_path))
             self.shark_image.convert()
 
