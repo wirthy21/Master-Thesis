@@ -5,8 +5,7 @@ import pickle
 import random
 import numpy as np
 from collections import deque
-import custom_marl_aquarium
-#from marl_aquarium.env.utils import scale
+from custom_marl_aquarium.env.utils import scale
 
 class Buffer:
     def __init__(self, pred_max_length, prey_max_length, device="cpu"):
