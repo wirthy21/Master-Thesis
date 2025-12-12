@@ -250,8 +250,8 @@ def run_policies(env, pred_policy, prey_policy, render=True):
         dis_pred = continuous_to_discrete(action_pred, 360, role='predator')
 
         prey_states = prey_tensor[..., :4]
-        agg_action, action_prey, mu_prey, sigma_prey, weights_prey, pred_gain = prey_policy.forward(prey_states)
-        dis_prey = continuous_to_discrete(agg_action, 360, role='prey')
+        agg_action, action_prey, action_pred, mu_prey, sigma_prey, weights_prey, pred_gain = prey_policy.forward(prey_states)
+        dis_prey = continuous_to_discrete(action_pred, 360, role='prey')
 
         # Action dictionary
         action_dict = {'predator_0': dis_pred}
@@ -485,47 +485,42 @@ def plot_pred_prey_metrics(gail_metrics, bc_metrics, couzin_metrics, expert_metr
 ##########################
 
 
-def compute_pin_an_maps2(pin, an, role, v=1.0,
-                        x_range=(-150, 150),  y_range=(-150, 150),
-                        n_points=80, n_orient=72, device="cpu"):
+def compute_pin_an_maps(pin, an, grid_size=100, n_orient=72):
 
-    pin.to(device).eval()
-    an.to(device).eval()
+    pin.to("cpu").eval()
+    an.to("cpu").eval()
 
-    xs = np.linspace(*x_range, n_points)
-    ys = np.linspace(*y_range, n_points)
+    xs = np.linspace(-1, 1, grid_size)
+    ys = np.linspace(-1, 1, grid_size)
 
-    thetas = torch.linspace(0.0, 2 * np.pi, n_orient + 1, device=device)[:-1]
-    vx = v * torch.cos(thetas)
-    vy = v * torch.sin(thetas)
+    thetas = torch.linspace(-np.pi, np.pi, n_orient+1, device="cpu")[:-1]
+    rel_vx = 1 * torch.cos(thetas)
+    rel_vy = 1 * torch.sin(thetas)
 
-    action_map = np.zeros((n_points, n_points), dtype=np.float32)
-    attn_map = np.zeros((n_points, n_points), dtype=np.float32)
+    action_map = np.zeros((grid_size, grid_size), dtype=np.float32)
+    attn_map = np.zeros((grid_size, grid_size), dtype=np.float32)
 
-    with torch.no_grad():
-        for ix, x in enumerate(xs):
-            for iy, y in enumerate(ys):
-                rel_x = torch.full((n_orient, 1), float(x), device=device)
-                rel_y = torch.full((n_orient, 1), float(y), device=device)
-                inputs = torch.cat([rel_x, rel_y, vx.unsqueeze(1), vy.unsqueeze(1)], dim=1)
+    for ix, x in enumerate(xs):
+        for iy, y in enumerate(ys):
+            dx = torch.full((n_orient, 1), float(x), device="cpu")
+            dy = torch.full((n_orient, 1), float(y), device="cpu")
+            inputs = torch.cat([dx, dy, rel_vx.unsqueeze(1), rel_vy.unsqueeze(1)], dim=1)
 
-                # PIN: mu, sigma
-                mu, sigma = pin(inputs)
-                turn = torch.tanh(mu.squeeze())
-                action_map[iy, ix] = turn.mean().item()
+            # PIN: mu, sigma
+            mu, sigma = pin(inputs)
+            turn = torch.tanh(mu.squeeze())
+            action_map[iy, ix] = turn.mean().item()
 
-                # AN: attention logits/weights
-                w_logits = an(inputs)
-                if isinstance(w_logits, tuple):
-                    w_logits = w_logits[0]
-                w_logits = w_logits.squeeze()
-                attn_map[iy, ix] = w_logits.mean().item()
+            # AN: attention logits/weights
+            w_logits = an(inputs)
+            w_logits = w_logits[0].squeeze()
+            attn_map[iy, ix] = w_logits.mean().item()
 
     return xs, ys, action_map, attn_map
 
 
 
-def plot_policy_maps2(xs, ys, action_map, attn_map, role="predator", img_path=None):
+def plot_policy_maps(xs, ys, action_map, attn_map, role="predator", img_path=None):
 
     cmap_pin_color = "inferno"
     cmap_an_color = "RdBu"
@@ -533,10 +528,11 @@ def plot_policy_maps2(xs, ys, action_map, attn_map, role="predator", img_path=No
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
 
     # ----- Pairwise-Interaction Map -----
-    vmax_act = np.nanmax(np.abs(action_map))
+    scaled_action_map = action_map * 180
+    vmax_act = np.nanmax(np.abs(scaled_action_map))
     norm_act = colors.TwoSlopeNorm(vcenter=0, vmin=-vmax_act, vmax=vmax_act)
 
-    im0 = axes[0].contourf(x, y, action_map, levels=30, cmap=cmap_pin_color, norm=norm_act)
+    im0 = axes[0].contourf(x, y, scaled_action_map, levels=30, cmap=cmap_pin_color, norm=norm_act)
     axes[0].set_title(f"[{role.upper()}] Pairwise-Interaction Map")
     axes[0].set_xlabel("x")
     axes[0].set_ylabel("y")
@@ -568,6 +564,7 @@ def plot_policy_maps2(xs, ys, action_map, attn_map, role="predator", img_path=No
 
     plt.tight_layout()
     plt.show()
+
 
 
 ####################################

@@ -31,7 +31,7 @@ class PreyPolicy(nn.Module):
         ##### Predator #####
         pred_states = states[:, 0, :]                               # Shape: (32,4)
         mu_pred, sigma_pred = self.pred_pairwise(pred_states)       # mu=32, simga=32
-        sampled_pred_action = Normal(mu_pred, sigma_pred).sample()  # actions=32
+        sampled_pred_action = Normal(mu_pred, sigma_pred).rsample()  # actions=32
         pred_actions = torch.tanh(sampled_pred_action) * math.pi    # Value Range [-pi:pi]
         pred_action_flat = pred_actions.squeeze(-1)
 
@@ -92,7 +92,7 @@ class PreyPolicy(nn.Module):
         #    print(f"  pred_gain min/mean/max: {pred_gain.min().item():.3f} / {pred_gain.mean().item():.3f} / {pred_gain.max().item():.3f}")
 
 
-        return final_action, prey_action_per_prey, mu_log, sigma_log, weights_log, pred_gain
+        return final_action, prey_action_per_prey, pred_action_flat, mu_log, sigma_log, weights_log, pred_gain
 
 
     def update(self, role, network,

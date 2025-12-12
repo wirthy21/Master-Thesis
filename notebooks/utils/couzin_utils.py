@@ -103,7 +103,6 @@ def run_couzin_simulation(visualization='on', dimension='2d', n=32, max_steps=10
             swarm_vel[i, :] = agent.vel
             swarm_color[i] = 2 - agent.is_alive
 
-            # direction = normalisiertes velocity (nur x,y)
             vel_norm = norm(agent.vel[0:2])
             if vel_norm > 0:
                 dir_xy = agent.vel[0:2] / vel_norm
@@ -285,7 +284,7 @@ def run_couzin_simulation(visualization='on', dimension='2d', n=32, max_steps=10
     return final_pred_tensor, final_prey_tensor, metrics
 
 
-def get_features_from_logs(prey_log_step, shark_log_step, area_width, area_height, constant_speed, shark_speed):
+def get_features_from_logs(prey_log_step, shark_log_step, area_width=50, area_height=50, constant_speed=2, shark_speed=5, expert_height=2160, expert_width=2160, expert_speed=15):
 
     combined = np.vstack([shark_log_step, prey_log_step])
     N = combined.shape[0]
@@ -301,22 +300,32 @@ def get_features_from_logs(prey_log_step, shark_log_step, area_width, area_heigh
     theta_norm = thetas / np.pi
     cos_t = np.cos(thetas)
     sin_t = np.sin(thetas)
+    
+    # Scale env to tensor dimensions
+    pos_scale_x = expert_width / area_width
+    pos_scale_y = expert_height / area_height
+    vel_scale   = expert_speed / shark_speed
 
-    xs_scaled = np.clip(xs, 0, area_width) / float(area_width)
-    ys_scaled = np.clip(ys, 0, area_height) / float(area_height)
+    xs_px = xs * pos_scale_x
+    ys_px = ys * pos_scale_y
+    vxs_px = vxs * vel_scale
+    vys_px = vys * vel_scale
+
+    # --- now do EXACT expert-style scaling ---
+    xs_scaled = np.clip(xs_px, 0, expert_width) / float(expert_width)
+    ys_scaled = np.clip(ys_px, 0, expert_height) / float(expert_height)
 
     dx = xs_scaled[None, :] - xs_scaled[:, None]
     dy = ys_scaled[None, :] - ys_scaled[:, None]
 
-    rel_vx = cos_t[:, None] * vxs[None, :] + sin_t[:, None] * vys[None, :]
-    rel_vy = -sin_t[:, None] * vxs[None, :] + cos_t[:, None] * vys[None, :]
+    rel_vx = cos_t[:, None] * vxs_px[None, :] + sin_t[:, None] * vys_px[None, :]
+    rel_vy = -sin_t[:, None] * vxs_px[None, :] + cos_t[:, None] * vys_px[None, :]
 
-    max_speed = float(max(constant_speed, shark_speed))
-    rel_vx = np.clip(rel_vx, -max_speed, max_speed) / max_speed
-    rel_vy = np.clip(rel_vy, -max_speed, max_speed) / max_speed
+    rel_vx = np.clip(rel_vx, -expert_speed, expert_speed) / expert_speed
+    rel_vy = np.clip(rel_vy, -expert_speed, expert_speed) / expert_speed
 
     theta_mat = np.tile(theta_norm[:, None], (1, N))
-    features = np.stack([dx, dy, rel_vx, rel_vy, theta_mat], axis=-1)
+    features = np.stack([dx, dy, rel_vx, rel_vy, theta_mat], axis=-1).astype(np.float32)
 
     mask = ~np.eye(N, dtype=bool)
     neigh = features[mask].reshape(N, N - 1, 5)
@@ -324,11 +333,11 @@ def get_features_from_logs(prey_log_step, shark_log_step, area_width, area_heigh
     pred_tensor = torch.from_numpy(neigh[0]).unsqueeze(0)
     prey_tensor = torch.from_numpy(neigh[1:])
 
-    polarization = compute_polarization(vxs, vys)
-    angular_momentum_val = compute_angular_momentum(xs_scaled, ys_scaled, vxs, vys)
-    sparsity = degree_of_sparsity(xs_scaled, ys_scaled)
-    dist_pred = distance_to_predator(xs_scaled, ys_scaled)
-    escape_align = escape_alignment(xs_scaled, ys_scaled, vxs, vys)
+    polarization = compute_polarization(vxs_px, vys_px)
+    angular_momentum_val = compute_angular_momentum(xs_px, ys_px, vxs_px, vys_px)
+    sparsity = degree_of_sparsity(xs_px, ys_px)
+    dist_pred = distance_to_predator(xs_px, ys_px)
+    escape_align = escape_alignment(xs_px, ys_px, vxs_px, vys_px)
 
     metrics = {
         "polarization": polarization,

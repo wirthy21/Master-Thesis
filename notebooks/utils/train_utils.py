@@ -191,15 +191,16 @@ def pretrain_policy(policy, expert_buffer, role, pred_bs=32, prey_bs=256, epochs
 
     if role == 'predator':
         batch, _ = expert_buffer.sample(pred_bs, prey_bs)
+        states = batch[..., :4]
+        actions = batch[:, 0, 4].to(device)
     else:
         _, batch = expert_buffer.sample(pred_bs, prey_bs)
+        states = batch[..., :4]
+        actions = batch[..., 4:].to(device)
 
-    states = batch[..., :4]
-    actions = batch[:, 0, 4].to(device)
-
-    ds = TensorDataset(states, actions)
-    bs = pred_bs if role=='predator' else prey_bs
-    loader = DataLoader(ds, batch_size=bs, shuffle=True)
+    dataset = TensorDataset(states, actions)
+    batch_size = pred_bs if role=='predator' else prey_bs
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     policy.to(device)
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
@@ -236,20 +237,22 @@ def pretrain_policy(policy, expert_buffer, role, pred_bs=32, prey_bs=256, epochs
 
 def pretrain_policy_with_validation(policy, pred_policy=None, expert_buffer=None, role=None, val_ratio=0.2, pred_bs=256, prey_bs=512, epochs=10, lr=1e-3, device='cpu', early_stopping=True, patience=20):
     if role == 'predator':
-        batch, _ = expert_buffer.sample(pred_bs, prey_bs)
+        pred_batch, _ = expert_buffer.sample(pred_bs, prey_bs)
+        states  = pred_batch[..., :4]
+        actions = pred_batch[:, 0, 4].squeeze()
     else:
-        _, batch = expert_buffer.sample(pred_bs, prey_bs)
+        _, prey_batch = expert_buffer.sample(pred_bs, prey_bs)
 
-    states  = batch[..., :4]
-    actions = batch[:, 0, 4].squeeze()
+        states  = prey_batch[..., :4]
+        actions = prey_batch[:, 0, 4].squeeze()
 
     dataset = TensorDataset(states, actions)
     val_size = int(len(dataset) * val_ratio)
     train_size = len(dataset) - val_size
     train_ds, val_ds = random_split(dataset, [train_size, val_size])
-    bs = pred_bs if role=='predator' else prey_bs
-    train_loader = DataLoader(train_ds, batch_size=bs, shuffle=True)
-    val_loader   = DataLoader(val_ds,   batch_size=bs, shuffle=False)
+    batch_size = pred_bs if role=='predator' else prey_bs
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False)
 
     policy.to(device)
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
@@ -265,7 +268,7 @@ def pretrain_policy_with_validation(policy, pred_policy=None, expert_buffer=None
     if role == 'predator':
         logs = {"role": "predator", "mu_pred": [], "sigma_pred": [], "weights_pred": []}
     else:
-        logs = {"role": "prey", "mu_prey": [], "sigma_prey": [], "weights_prey": [], "pred_gain": []}
+        logs = {"role": "prey", "mu_prey": [], "sigma_prey": [], "weights_prey": [], "pred_gain": [], "agg_action": [], "pred_action": [], "prey_action": []}
 
     for epoch in range(1, epochs + 1):
         # ---- Train ----
@@ -281,7 +284,7 @@ def pretrain_policy_with_validation(policy, pred_policy=None, expert_buffer=None
                 loss = F.mse_loss(actions_pred, batch_actions)
             else:
                 pred_gain_weights = get_pred_gain(batch_states, pred_policy)
-                agg_action, actions_prey, mu_prey, sigma_prey, weights_prey, pred_gain = policy.forward(batch_states, pred_gain_weights)
+                agg_action, actions_prey, action_pred, mu_prey, sigma_prey, weights_prey, pred_gain = policy.forward(batch_states, pred_gain_weights)
                 loss = F.mse_loss(actions_prey, batch_actions)
 
             optimizer.zero_grad()
@@ -297,17 +300,21 @@ def pretrain_policy_with_validation(policy, pred_policy=None, expert_buffer=None
             logs["sigma_pred"].append(sigma_pred.detach().cpu().numpy())
             logs["weights_pred"].append(weights_pred.detach().cpu().numpy())
         else:
+            logs
             logs["mu_prey"].append(mu_prey.detach().cpu().numpy())
             logs["sigma_prey"].append(sigma_prey.detach().cpu().numpy())
             logs["weights_prey"].append(weights_prey.detach().cpu().numpy())
             logs["pred_gain"].append(pred_gain.detach().cpu().numpy())
+            logs["agg_action"].append(agg_action.detach().cpu().numpy())
+            logs["pred_action"].append(action_pred.detach().cpu().numpy())
+            logs["prey_action"].append(actions_prey.detach().cpu().numpy())
 
         # ---- Validation ----
         policy.eval()
         total_val_loss = 0.0
         with torch.no_grad():
             for batch_states, batch_actions in val_loader:
-                batch_states  = batch_states.to(device)
+                batch_states = batch_states.to(device)
                 batch_actions = batch_actions.to(device)
 
                 if role == 'predator':
@@ -315,7 +322,7 @@ def pretrain_policy_with_validation(policy, pred_policy=None, expert_buffer=None
                     loss = F.mse_loss(actions_pred, batch_actions)
                 else:
                     pred_gain_weights = get_pred_gain(batch_states, pred_policy)
-                    agg_action, actions_prey, mu_prey, sigma_prey, weights_prey, pred_gain_val = policy.forward(batch_states, pred_gain_weights)
+                    agg_action, actions_prey, action_pred, mu_prey, sigma_prey, weights_prey, pred_gain_val = policy.forward(batch_states, pred_gain_weights)
                     loss = F.mse_loss(actions_prey, batch_actions)
 
                 total_val_loss += loss.item() * batch_states.size(0)
@@ -330,7 +337,7 @@ def pretrain_policy_with_validation(policy, pred_policy=None, expert_buffer=None
         if role == 'predator':
             print(f"[{role.upper()}] Epoch {epoch:02d} | Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f}")
         else:
-            print(f"[{role.upper()}] Epoch {epoch:02d} | Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f} | Pred Gain: {pred_gain[0]}")
+            print(f"[{role.upper()}] Epoch {epoch:02d} | Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f}")
             
         if early_stopping:
             if avg_val_loss > avg_train_loss:
