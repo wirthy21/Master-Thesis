@@ -311,7 +311,6 @@ def get_features_from_logs(prey_log_step, shark_log_step, area_width=50, area_he
     vxs_px = vxs * vel_scale
     vys_px = vys * vel_scale
 
-    # --- now do EXACT expert-style scaling ---
     xs_scaled = np.clip(xs_px, 0, expert_width) / float(expert_width)
     ys_scaled = np.clip(ys_px, 0, expert_height) / float(expert_height)
 

@@ -56,11 +56,11 @@ def apply_perturbation(args):
 
         pred_reward_diff = (reward_pred_pos - reward_pred_neg).detach().item()
 
-        if torch.rand(1).item() < 0.01:
-            print("[DEBUG|apply_perturbation|pred]")
-            print("  reward_pos:", reward_pred_pos.item(),
-                  "reward_neg:", reward_pred_neg.item(),
-                  "diff:", pred_reward_diff)
+        #if torch.rand(1).item() < 0.01:
+        #    print("[DEBUG|apply_perturbation|pred]")
+        #    print("  reward_pos:", reward_pred_pos.item(),
+        #          "reward_neg:", reward_pred_neg.item(),
+        #          "diff:", pred_reward_diff)
 
         return pred_reward_diff
 
@@ -82,11 +82,11 @@ def apply_perturbation(args):
 
         prey_reward_diff = (reward_prey_pos - reward_prey_neg).detach().item()
 
-        if torch.rand(1).item() < 0.01:
-            print("[DEBUG|apply_perturbation|prey]")
-            print("  reward_pos:", reward_prey_pos.item(),
-                  "reward_neg:", reward_prey_neg.item(),
-                  "diff:", prey_reward_diff)
+        #if torch.rand(1).item() < 0.01:
+        #    print("[DEBUG|apply_perturbation|prey]")
+        #    print("  reward_pos:", reward_prey_pos.item(),
+        #          "reward_neg:", reward_prey_neg.item(),
+        #          "diff:", prey_reward_diff)
 
         return prey_reward_diff
 

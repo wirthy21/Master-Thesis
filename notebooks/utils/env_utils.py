@@ -63,40 +63,6 @@ def continuous_to_discrete(actions, action_count=360, role="predator"):
         return discrete_action.item()
     else:
         return discrete_action.flatten().tolist()
-    
-
-def get_pred_gain_alt(states, pred_policy):
-    agents, neigh, feat = states.shape
-
-    logits = pred_policy.attention(states)
-    logits = logits.view(agents, neigh)
-    weights = torch.softmax(logits, dim=1)
-
-    predator_attention = weights[:, 0]
-    base = 1 / neigh
-
-    gains = (predator_attention - base).clamp(min=0.0) / (1.0 - base + 1e-8)
-
-    #if torch.rand(1).item() < 0.002:
-    #    print(f"\n[DEBUG|pred_gain] ATTENTION: min {predator_attention.min().item():.3f} | max: {predator_attention.max().item():.3f} | mean: {predator_attention.mean().item():.3f}")
-    #    print(f"\n[DEBUG|pred_gain] GAIN: min {gains.min().item():.3f} | max: {gains.max().item():.3f} | mean: {gains.mean().item():.3f}")
-        
-    return gains
-
-
-
-def get_pred_gain(states, pred_policy):
-    agents, neigh, feat = states.shape
-    logits = pred_policy.attention(states).view(agents, neigh)
-    weights = torch.softmax(logits, dim=1)
-    predator_attention = weights[:, 0]
-    gains = predator_attention.clamp(0.0, 1.0)
-
-    #if torch.rand(1).item() < 0.002:
-    #    print(f"\n[DEBUG|pred_gain] ATTENTION: min {predator_attention.min().item():.3f} | max: {predator_attention.max().item():.3f} | mean: {predator_attention.mean().item():.3f}")
-    #    print(f"\n[DEBUG|pred_gain] GAIN: min {gains.min().item():.3f} | max: {gains.max().item():.3f} | mean: {gains.mean().item():.3f}")
-
-    return gains
 
 
 def parallel_get_rollouts(env, pred_policy=None, prey_policy=None, clip_length=30):

@@ -42,7 +42,7 @@ def gradient_penalty(discriminator, expert_traj, generated_traj):
         return torch.mean((grad_norm - 1) ** 2)
         
 
-# Uses Jensen–Shannon‑Divergenz‑Loss
+# Nutzt Jensen–Shannon‑Divergenz‑Loss
 def compute_discriminator_loss(expert_scores, policy_scores, lambda_gp, gp, label_smoothing=False, smooth=0.1):
     #clipping
     clipped_expert_scores = torch.clamp(expert_scores, min=1e-8, max=1 - 1e-8) #necessary to avoid log(0) (and log(1-1))
@@ -65,6 +65,7 @@ def compute_discriminator_loss(expert_scores, policy_scores, lambda_gp, gp, labe
 
 
 def compute_wasserstein_loss(expert_scores, policy_scores, lambda_gp, gp):
+    # Label-Smoothing not nessary for WGAN-GP
     loss = policy_scores.mean() - expert_scores.mean() + lambda_gp * gp
     return loss
 
@@ -186,21 +187,16 @@ class EarlyStoppingWasserstein:
 
 
 
-def pretrain_policy(policy, expert_buffer, role, pred_bs=32, prey_bs=256, prey_pred_bs=32, epochs=10, lr=1e-3, device='cpu'):
+def pretrain_policy(policy, expert_buffer, role, pred_bs=32, prey_bs=256, epochs=10, lr=1e-3, device='cpu', save_dir=None):
 
     if role == 'predator':
-        batch, _, _ = expert_buffer.sample(pred_bs, prey_bs, prey_pred_bs)
-        states = batch[..., :4]
-        actions = batch[:, 0, 4].to(device)
-    elif role == 'prey':
-        _, batch, _ = expert_buffer.sample(pred_bs, prey_bs, prey_pred_bs)
+        batch, _ = expert_buffer.sample(pred_bs, prey_bs)
         states = batch[..., :4]
         actions = batch[:, 0, 4].to(device)
     else:
-        _, _, batch = expert_buffer.sample(pred_bs, prey_bs, prey_pred_bs)
-        states = batch[:,  0, :4]
-        actions = batch[:, 0, 4].to(device)
-
+        _, batch = expert_buffer.sample(pred_bs, prey_bs)
+        states = batch[..., :4]
+        actions = batch[..., 4:].to(device)
 
     dataset = TensorDataset(states, actions)
     batch_size = pred_bs if role=='predator' else prey_bs
@@ -209,52 +205,51 @@ def pretrain_policy(policy, expert_buffer, role, pred_bs=32, prey_bs=256, prey_p
     policy.to(device)
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
 
+    pretrain_log = []
+
     for epoch in range(1, epochs+1):
         total_loss = 0.0
         for batch_states, batch_actions in loader:
-            batch_states = batch_states.to(device)
+            batch_states = batch_states.to(device)    # (bs,neigh,4)
             batch_actions = batch_actions.to(device)
 
             if role == 'predator':
-                action_pred, mu_pred, sigma_pred, weights_pred = policy.forward(batch_states)
-                loss = F.mse_loss(action_pred, batch_actions)
-            elif role == 'prey':
-                #prey_action_per_prey, mu_log, sigma_log, weights_log
-                action_prey, mu_prey, sigma_prey, weights_prey = policy.forward(batch_states)
-                loss = F.mse_loss(action_prey, batch_actions)
+                actions_pred, mu_pred, sigma_pred, weights_pred = policy.forward(batch_states)
+                loss = F.mse_loss(actions_pred, batch_actions)
             else:
-                prey_pred_action, mu_prey_pred_action, sigma_prey_pred_action = policy.forward(batch_states)
-                loss = F.mse_loss(prey_pred_action, batch_actions)
+                actions_prey, mu_prey, sigma_prey, weights_prey, pred_gain = policy.forward(batch_states, weights_pred)
+                loss = F.mse_loss(actions_prey, batch_actions)
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             total_loss += loss.item() * batch_states.size(0)
+            pretrain_log.append({"epoch": epoch, "loss": loss.item()})
+
+    pretrain_dir = os.path.join(save_dir, "pretraining")
+    os.makedirs(pretrain_dir, exist_ok=True)
+    torch.save(policy, os.path.join(pretrain_dir, f"pretrained_policy_{role}.pt"))
+    torch.save(pretrain_log, os.path.join(pretrain_dir, f"pretrain_log_{role}.pt"))
 
     return policy
 
 
 
 def pretrain_policy_with_validation(policy, pred_policy=None, expert_buffer=None, role=None, val_ratio=0.2, pred_bs=256, prey_bs=512, epochs=10, lr=1e-3, device='cpu', early_stopping=True, patience=20):
-    
     if role == 'predator':
-        batch, _ = expert_buffer.sample(pred_bs, prey_bs)
-        states = batch[..., :4]
-        actions = batch[:, 0, 4].to(device)
-    elif role == 'prey':
-        _, batch = expert_buffer.sample(pred_bs, prey_bs)
-        states = batch[..., :4]
-        actions = batch[:, 0, 4].to(device)
+        pred_batch, _ = expert_buffer.sample(pred_bs, prey_bs)
+        states  = pred_batch[..., :4]
+        actions = pred_batch[:, 0, 4].squeeze()
     else:
-        _, batch = expert_buffer.sample(pred_bs, prey_bs)
-        states = batch[:,  0, :4]
-        actions = batch[:, 0, 4].to(device)
+        _, prey_batch = expert_buffer.sample(pred_bs, prey_bs)
+
+        states  = prey_batch[..., :4]
+        actions = prey_batch[:, 0, 4].squeeze()
 
     dataset = TensorDataset(states, actions)
     val_size = int(len(dataset) * val_ratio)
     train_size = len(dataset) - val_size
     train_ds, val_ds = random_split(dataset, [train_size, val_size])
-
     batch_size = pred_bs if role=='predator' else prey_bs
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False)
@@ -272,7 +267,7 @@ def pretrain_policy_with_validation(policy, pred_policy=None, expert_buffer=None
     # Logs
     if role == 'predator':
         logs = {"role": "predator", "mu_pred": [], "sigma_pred": [], "weights_pred": []}
-    elif role == 'prey':
+    else:
         logs = {"role": "prey", "mu_prey": [], "sigma_prey": [], "weights_prey": [], "pred_gain": [], "agg_action": [], "pred_action": [], "prey_action": []}
 
     for epoch in range(1, epochs + 1):
@@ -287,14 +282,10 @@ def pretrain_policy_with_validation(policy, pred_policy=None, expert_buffer=None
             if role == 'predator':
                 actions_pred, mu_pred, sigma_pred, weights_pred = policy.forward(batch_states)
                 loss = F.mse_loss(actions_pred, batch_actions)
-            elif role == 'prey':
+            else:
                 pred_gain_weights = get_pred_gain(batch_states, pred_policy)
                 agg_action, actions_prey, action_pred, mu_prey, sigma_prey, weights_prey, pred_gain = policy.forward(batch_states, pred_gain_weights)
                 loss = F.mse_loss(actions_prey, batch_actions)
-            else:
-                actions_pred, mu_pred, sigma_pred, weights_pred = policy.forward(batch_states)
-                loss = F.mse_loss(actions_pred, batch_actions)
-
 
             optimizer.zero_grad()
             loss.backward()
