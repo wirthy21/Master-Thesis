@@ -91,7 +91,17 @@ def get_state_tensors(prey_log_step, pred_log_step, n_pred=1,
     neigh = features[mask].reshape(n_agents, n_agents-1, 4)
 
     tensor = torch.from_numpy(neigh)   # already float32
-    return tensor[:n_pred], tensor[n_pred:]
+
+    pred_tensor = tensor[:n_pred]
+    prey_tensor = tensor[n_pred:]
+
+    if n_pred > 0:
+        agents, neighs, _ = prey_tensor.shape
+        flag = torch.zeros((agents, neighs, 1), dtype=prey_tensor.dtype, device=prey_tensor.device)
+        flag[:, :n_pred, 0] = 1
+        prey_tensor = torch.cat([flag, prey_tensor], dim=-1)
+
+    return pred_tensor, prey_tensor
 
 
 def apply_init_pool(init_pool, pred, prey, area_width=50, area_height=50):
@@ -136,7 +146,7 @@ def run_env_simulation(prey_policy=None, pred_policy=None,
 
     n_agents = n_prey + n_pred
     neigh = n_agents - 1
-    prey_traj = torch.empty((max_steps, n_prey, neigh, 5), dtype=torch.float32)  # CPU
+    prey_traj = torch.empty((max_steps, n_prey, neigh, 6), dtype=torch.float32) if n_pred > 0 else torch.empty((max_steps, n_prey, neigh, 5), dtype=torch.float32)
     pred_traj = torch.empty((max_steps, n_pred, neigh, 5), dtype=torch.float32) if n_pred > 0 else None
 
     if visualization == 'on':
@@ -212,10 +222,15 @@ def run_env_simulation(prey_policy=None, pred_policy=None,
                 pred_traj[t, :, :, :4] = pred_states
                 pred_traj[t, :, :, 4:] = pred_actions.unsqueeze(1).expand(-1, neigh, -1)
 
-        with torch.inference_mode():
-            prey_actions = prey_policy.forward(prey_states, deterministic=deterministic)
-            prey_traj[t, :, :, :4] = prey_states
-            prey_traj[t, :, :, 4:] = prey_actions.unsqueeze(1).expand(-1, neigh, -1)
+            with torch.inference_mode():
+                prey_actions = prey_policy.forward(prey_states, deterministic=deterministic)
+                prey_traj[t, :, :, :5] = prey_states
+                prey_traj[t, :, :, 5:] = prey_actions.unsqueeze(1).expand(-1, neigh, -1)
+        else:
+            with torch.inference_mode():
+                prey_actions = prey_policy.forward(prey_states, deterministic=deterministic)
+                prey_traj[t, :, :, :4] = prey_states
+                prey_traj[t, :, :, 4:] = prey_actions.unsqueeze(1).expand(-1, neigh, -1)
 
         prey_actions = prey_actions.squeeze(-1).detach().cpu().numpy()
         for i, agent in enumerate(prey):
@@ -237,19 +252,7 @@ def run_env_simulation(prey_policy=None, pred_policy=None,
 
         t += 1
 
-    if n_pred > 0:
         prey_tensor = prey_traj[:t]
-        pred_tensor = pred_traj[:t]
-
-        frames, agents, neigh, feat = prey_tensor.shape
-        flag = torch.zeros(
-            (frames, agents, neigh, 1),
-            dtype=prey_tensor.dtype,
-            device=prey_tensor.device)
-        flag[:, :, :n_pred, 0] = 1
-        prey_tensor = torch.cat([flag, prey_tensor], dim=-1)
-    else:
-        pred_tensor = None
-        prey_tensor = prey_traj[:t]
+        pred_tensor = pred_traj[:t] if n_pred > 0 else None
 
     return pred_tensor, prey_tensor

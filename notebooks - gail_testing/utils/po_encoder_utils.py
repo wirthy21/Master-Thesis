@@ -90,6 +90,9 @@ class TransitionEncoder(nn.Module):
         return z_state, transition_feature
     
 
+
+# VigRec
+
 class TrajectoryAugmentation(nn.Module):
     def __init__(self, noise_std=0.01, neigh_drop=0.10, feat_drop=0.05):
         super().__init__()
@@ -101,6 +104,9 @@ class TrajectoryAugmentation(nn.Module):
         batch, frames, agents, neigh, features = states.shape
         device = states.device
 
+        if self.noise_std > 0:
+            states = states + torch.randn_like(states) * self.noise_std
+
         neigh_mask = torch.ones((batch, frames, agents, neigh, 1), device=device, dtype=states.dtype)
         feat_mask  = torch.ones((batch, frames, agents, neigh, features), device=device, dtype=states.dtype)
 
@@ -109,16 +115,6 @@ class TrajectoryAugmentation(nn.Module):
 
         if self.feat_drop > 0:
             feat_mask = (torch.rand(batch, frames, agents, 1, features, device=device) > self.feat_drop).float()
-            feat_mask = feat_mask.expand(batch, frames, agents, neigh, features)
-
-        if features == 5:
-            feat_mask[..., 0] = 1.0
-
-        if self.noise_std > 0:
-            noise = torch.randn_like(states) * self.noise_std
-            if features == 5:
-                noise[..., 0] = 0.0
-            states = states + noise
 
         return states, neigh_mask, feat_mask
 
@@ -180,7 +176,7 @@ def sample_data(data, consecutive_frames=10, batch_size=10):
     return data[idx]
 
 
-def train_encoder(encoder, projector, aug, exp_tensor, epochs, optimizer, role="prey"):
+def train_encoder(encoder, projector, aug, exp_tensor, epochs, optimizer):
     device = next(encoder.parameters()).device
 
     for epoch in range(1, epochs + 1):
@@ -189,11 +185,7 @@ def train_encoder(encoder, projector, aug, exp_tensor, epochs, optimizer, role="
 
         expert_batch = sample_data(exp_tensor, consecutive_frames=10, batch_size=64)
         expert_batch = expert_batch.to(device, non_blocking=True)
-
-        if role == "prey":
-            states = expert_batch[..., :5]
-        else:
-            states = expert_batch[..., :4]
+        states = expert_batch[..., :4]
 
         x1, neigh_mask1, feat_mask1 = aug(states)
         x2, neigh_mask2, feat_mask2 = aug(states)
@@ -201,8 +193,8 @@ def train_encoder(encoder, projector, aug, exp_tensor, epochs, optimizer, role="
         z_state1, trans1 = encoder(x1, neigh_mask=neigh_mask1, feat_mask=feat_mask1)
         z_state2, trans2 = encoder(x2, neigh_mask=neigh_mask2, feat_mask=feat_mask2)
         
-        r1 = trans1.reshape(-1, trans1.size(-1))
-        r2 = trans2.reshape(-1, trans2.size(-1))
+        r1 = trans1.reshape(-1, trans1.size(-1))  # [-1, 64]
+        r2 = trans2.reshape(-1, trans2.size(-1))  # [-1, 64]
 
         y1 = projector(r1)
         y2 = projector(r2)
