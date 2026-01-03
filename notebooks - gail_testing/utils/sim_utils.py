@@ -110,6 +110,9 @@ def apply_init_pool(init_pool, pred, prey, area_width=50, area_height=50):
 
     positions = init_pool[np.random.randint(steps), :agents]  # [agents, 2]
 
+    positions[:, 0] *= float(area_width)
+    positions[:, 1] *= float(area_height)
+
     # predators
     for i in range(len(pred)):
         x = float(np.clip(positions[i, 0], 0.0, area_width))
@@ -198,7 +201,7 @@ def run_env_simulation(prey_policy=None, pred_policy=None,
                     pred_pos_vis[:, 0], pred_pos_vis[:, 1],
                     pred_vel_vis[:, 0], pred_vel_vis[:, 1],
                     color="#FF0000",
-                    scale=15,
+                    scale=120,
                     width=0.01,
                     headwidth=3,
                     headlength=3,

@@ -168,15 +168,16 @@ def vicreg_loss(z1, z2, sim_coeff=25.0, std_coeff=15.0, cov_coeff=5.0, eps=1e-4)
     return loss, logs
 
 
-def sample_data(data, batch_size=10, window_len=10):
-    if data.dim() == 5: # expert_case
-        idx = torch.randint(0, data.size(0), (batch_size,), device=data.device)
-        return data[idx]
-    
-    if data.dim() == 4: # generative case
-        n_samples = data.size(0)
-        idx = torch.randint(n_samples - window_len + 1, (batch_size,), device=data.device)
-        return torch.stack([data[i:i + window_len] for i in idx.tolist()])
+def sample_data(data, consecutive_frames=10, batch_size=10):
+    # data: [F, A, N, Feat]
+    frames = data.size(0)
+    max_start = frames - consecutive_frames + 1
+    device = data.device
+
+    starts = torch.randint(0, max_start, (batch_size,), device=device)
+    offsets = torch.arange(consecutive_frames, device=device)
+    idx = starts[:, None] + offsets[None, :]          # [B, T]
+    return data[idx]
 
 
 def train_encoder(encoder, projector, aug, exp_tensor, epochs, optimizer, role="prey"):
@@ -186,7 +187,7 @@ def train_encoder(encoder, projector, aug, exp_tensor, epochs, optimizer, role="
         encoder.train()
         projector.train()
 
-        expert_batch = sample_data(exp_tensor, batch_size=10, window_len=10)
+        expert_batch = sample_data(exp_tensor, consecutive_frames=10, batch_size=64)
         expert_batch = expert_batch.to(device, non_blocking=True)
 
         if role == "prey":
