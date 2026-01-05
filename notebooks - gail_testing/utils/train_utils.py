@@ -9,7 +9,6 @@ from collections import deque
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from utils.eval_utils import *
-from utils.env_utils import *
 from torch.utils.data import TensorDataset, DataLoader, random_split
 
 
