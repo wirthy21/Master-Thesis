@@ -65,9 +65,9 @@ def wrap_to_pi(a):
 
 
 def run_couzin_simulation(
-    visualization='on', n=32, max_steps=1000, dt=0.5, free_offset=10, number_of_sharks=1, alpha=0.1,
+    visualization='on', n=32, max_steps=100, dt=0.5, free_offset=10, number_of_sharks=1, alpha=0.1,
     r_r=2, r_o=10, r_a=40, r_thr=30, r_lethal=1, field_of_view=3*np.pi/2, field_of_view_shark=2*np.pi,
-    theta_dot_max=np.pi/0.5, theta_dot_max_shark=np.pi/0.5, constant_speed=5, shark_speed=5,
+    theta_dot_max=0.5, theta_dot_max_shark=0.5, constant_speed=5, shark_speed=5,
     area_width=50, area_height=50):
 
     swarm = [Agent(i, constant_speed, area_width, area_height) for i in range(n)]
@@ -284,7 +284,6 @@ def run_couzin_simulation(
 
         pred_tensor, prey_tensor, metrics = get_state_tensors(
             prey_log[t], predator_log[t],
-            prey_actions=prey_actions, shark_actions=shark_actions, 
             area_width=area_width, area_height=area_height,
             constant_speed=constant_speed, shark_speed=shark_speed,
             number_of_sharks=number_of_sharks)
@@ -331,13 +330,13 @@ def run_couzin_simulation(
 
     init_pool = np.stack([xs, ys], axis=-1).astype(np.float32)
     init_pool = init_pool[50:] # cut 50 off due to random init
+    init_pool = torch.from_numpy(init_pool).to(torch.float32)
 
     return final_pred_tensor, final_prey_tensor, metrics_list, init_pool
 
 
 
 def get_state_tensors(prey_log_step, shark_log_step, 
-                      prey_actions=None, shark_actions=None, 
                       area_width=50, area_height=50, 
                       constant_speed=15, shark_speed=15, 
                       number_of_sharks=1):
@@ -353,7 +352,8 @@ def get_state_tensors(prey_log_step, shark_log_step,
     dir_y = combined[:, 5].astype(np.float32)
 
     thetas = np.arctan2(dir_y, dir_x).astype(np.float32)
-    theta_norm = thetas / np.pi
+    theta_scaled = (thetas + np.pi) / (2.0 * np.pi) # [0,1]
+    theta_scaled = np.clip(theta_scaled, 0.0, 1.0).astype(np.float32)
     cos_t = np.cos(thetas).astype(np.float32)
     sin_t = np.sin(thetas).astype(np.float32)
 
@@ -370,15 +370,9 @@ def get_state_tensors(prey_log_step, shark_log_step,
     rel_vx = np.clip(rel_vx, -speed, speed) / speed
     rel_vy = np.clip(rel_vy, -speed, speed) / speed
 
-    if shark_actions is None:
-        shark_actions = np.full((number_of_sharks,), 0.5, dtype=np.float32)
-    if prey_actions is None:
-        prey_actions = np.full((N - number_of_sharks,), 0.5, dtype=np.float32)
+    theta_mat = np.tile(theta_scaled[:, None], (1, N)).astype(np.float32)
 
-    actions = np.concatenate([shark_actions, prey_actions]).astype(np.float32)  # [N]
-    action_mat = np.tile(actions[:, None], (1, N))     
-
-    features = np.stack([dx, dy, rel_vx, rel_vy, action_mat], axis=-1).astype(np.float32)
+    features = np.stack([dx, dy, rel_vx, rel_vy, theta_mat], axis=-1).astype(np.float32)
 
     mask = ~np.eye(N, dtype=bool)
     neigh = features[mask].reshape(N, N - 1, 5)
@@ -633,7 +627,7 @@ def run_circular_simulation(
 
         t += 1
 
-    final_pred_tensor = torch.stack(pred_tensor_list, dim=0) if number_of_sharks > 0 else 0
+    final_pred_tensor = torch.stack(pred_tensor_list, dim=0) if number_of_sharks > 0 else None
     final_prey_tensor = torch.stack(prey_tensor_list, dim=0)
 
     if number_of_sharks > 0:

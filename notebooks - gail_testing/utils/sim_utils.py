@@ -62,7 +62,8 @@ def enforce_walls(agent, area_width, area_height):
 
 def get_state_tensors(prey_log_step, pred_log_step, n_pred=1, 
                       area_width=50, area_height=50,
-                      prey_speed=5, pred_speed=5, mask=None):
+                      prey_speed=5, pred_speed=5, max_speed_norm=15,
+                      mask=None):
     
     combined = np.vstack([pred_log_step, prey_log_step]).astype(np.float32)  # [N,6]
     n_agents = combined.shape[0]
@@ -83,7 +84,7 @@ def get_state_tensors(prey_log_step, pred_log_step, n_pred=1,
     rel_vx = cos_t[:, None] * vxs[None, :] + sin_t[:, None] * vys[None, :]
     rel_vy = -sin_t[:, None] * vxs[None, :] + cos_t[:, None] * vys[None, :]
 
-    speed = max(prey_speed, pred_speed)
+    speed = max_speed_norm # same scaling as expert
     rel_vx = np.clip(rel_vx, -speed, speed) / speed
     rel_vy = np.clip(rel_vy, -speed, speed) / speed
 
@@ -108,27 +109,28 @@ def apply_init_pool(init_pool, pred, prey, area_width=50, area_height=50):
     steps, agents, coordinates = init_pool.shape
     agents = len(pred) + len(prey)
 
-    positions = init_pool[np.random.randint(steps), :agents]  # [agents, 2]
+    if not torch.is_tensor(init_pool):
+        init_pool = torch.as_tensor(init_pool, dtype=torch.float32)
 
-    positions[:, 0] *= float(area_width)
-    positions[:, 1] *= float(area_height)
+    positions = init_pool[torch.randint(steps, (1,)).item(), :agents].clone()  # [agents, 2]
+
+    center_env = positions.new_tensor([area_width * 0.5, area_height * 0.5])
+    center_pos = positions.mean(dim=0)
+    shift = center_env - center_pos
+    positions = positions + shift
 
     # predators
     for i in range(len(pred)):
-        x = float(np.clip(positions[i, 0], 0.0, area_width))
-        y = float(np.clip(positions[i, 1], 0.0, area_height))
-        pred[i].pos = np.array([x, y], dtype=np.float64)
+        pred[i].pos = positions[i].detach().cpu().numpy().astype(np.float64)
 
     # prey
     for i in range(len(prey)):
         j = len(pred) + i
-        x = float(np.clip(positions[j, 0], 0.0, area_width))
-        y = float(np.clip(positions[j, 1], 0.0, area_height))
-        prey[i].pos = np.array([x, y], dtype=np.float64)
+        prey[i].pos = positions[j].detach().cpu().numpy().astype(np.float64)
 
 
 def run_env_simulation(prey_policy=None, pred_policy=None, 
-                       n_prey=32, n_pred=1, step_size=0.5,
+                       n_prey=32, n_pred=1, step_size=1.0,
                        max_steps=100, seed=None, deterministic=False,
                        prey_speed=15, pred_speed=15, 
                        area_width=50, area_height=50, 
@@ -245,13 +247,13 @@ def run_env_simulation(prey_policy=None, pred_policy=None,
                 apply_turnrate_on_theta(predator, pred_actions[i], pred_speed)
 
         for agent in prey:
-            enforce_walls(agent, area_width, area_height)
             agent.update_position(step_size=step_size)
+            enforce_walls(agent, area_width, area_height)
 
         if n_pred > 0:
             for predator in pred:
-                enforce_walls(predator, area_width, area_height)
                 predator.update_position(step_size=step_size)
+                enforce_walls(predator, area_width, area_height)
 
         t += 1
 
