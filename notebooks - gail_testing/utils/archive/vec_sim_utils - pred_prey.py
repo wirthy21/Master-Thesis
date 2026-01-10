@@ -295,7 +295,7 @@ def run_batch_env(prey_policy=None, pred_policy=None,
         prey_traj = torch.empty((batch, max_steps, n_prey, n_neigh, 6), dtype=torch.float32, device=device)
         pred_traj = torch.empty((batch, max_steps, n_pred, n_neigh, 5), dtype=torch.float32, device=device)
     else:
-        prey_traj = torch.empty((batch, max_steps, n_prey, n_neigh, 5), dtype=torch.float32, device=device)
+        prey_traj = torch.empty((max_steps, batch, n_prey, n_neigh, 5), dtype=torch.float32, device=device)
         pred_traj = None
 
     idx = torch.arange(n_agents, device=device)
@@ -398,9 +398,8 @@ def apply_perturbations(prey_policy, pred_policy, init_pos,
                                             sigma=sigma, num_perturbations=num_perturbations,
                                             device=device)
     
-    n_pred = 1 if pred_policy is not None else 0
     pred_rollouts, prey_rollouts = run_batch_env(prey_policy=prey_policy, pred_policy=pred_policy,
-                                        batch=2*num_perturbations, init_pos=init_pos, n_pred=n_pred,
+                                        batch=2*num_perturbations, init_pos=init_pos,
                                         pert_list=pert_list, role=role)
     
     return pred_rollouts, prey_rollouts, epsilons

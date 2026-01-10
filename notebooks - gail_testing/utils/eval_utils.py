@@ -7,67 +7,62 @@ from geomloss import SamplesLoss
 from utils.encoder_utils import *
 from scipy.spatial import cKDTree
 
-def get_expert_values(exp_pred_tensor, exp_prey_tensor, 
-                      prey_mmd_loss, pred_mmd_loss, 
-                      prey_encoder, pred_encoder, 
-                      sinkhorn_loss, device):
-    
+def get_expert_values(exp_pred_tensor=None, exp_prey_tensor=None, 
+                      prey_mmd_loss=None, pred_mmd_loss=None, 
+                      prey_encoder=None, pred_encoder=None, 
+                      sinkhorn_loss=None):
+
     prey_mmd_list = []
     pred_mmd_list = []
 
     prey_sinkhorn_list = []
     pred_sinkhorn_list = []
 
-    exp_pred_tensor = exp_pred_tensor.to(device)
-    exp_prey_tensor = exp_prey_tensor.to(device)
-
     for i in tqdm(range(500)):
-        # MMD
-        expert_pred_batch1 = sample_data(exp_pred_tensor, batch_size=10, window_len=10)
-        expert_pred_batch2 = sample_data(exp_pred_tensor, batch_size=10, window_len=10)
-
         expert_prey_batch1 = sample_data(exp_prey_tensor, batch_size=10, window_len=10)
         expert_prey_batch2 = sample_data(exp_prey_tensor, batch_size=10, window_len=10)
 
         prey_mmd = prey_mmd_loss(expert_prey_batch1, expert_prey_batch2).item()
-        pred_mmd = pred_mmd_loss(expert_pred_batch1, expert_pred_batch2).item()
-
         prey_mmd_list.append(prey_mmd)
-        pred_mmd_list.append(pred_mmd)
-
-        # Sinkhorn
-        _, trans_exp_pred = pred_encoder(expert_pred_batch1[...,:4])
-        _, trans_gen_pred = pred_encoder(expert_pred_batch2[...,:4])
-        batch, frames, agents, dim = trans_exp_pred.shape
-        pred_x = trans_exp_pred.reshape(batch * frames, agents, dim)
-        pred_y = trans_gen_pred.reshape(batch * frames, agents, dim)
 
         _, trans_exp_prey = prey_encoder(expert_prey_batch1[...,:5])
         _, trans_gen_prey = prey_encoder(expert_prey_batch2[...,:5])
         batch, frames, agents, dim = trans_exp_prey.shape
         prey_x = trans_exp_prey.reshape(batch * frames, agents, dim)
         prey_y = trans_gen_prey.reshape(batch * frames, agents, dim)
-
-        sinkhorn_pred = sinkhorn_loss(pred_x, pred_y)
         sinkhorn_prey = sinkhorn_loss(prey_x, prey_y)
-
         prey_sinkhorn_list.append(sinkhorn_prey.mean().item())
-        pred_sinkhorn_list.append(sinkhorn_pred.mean().item())
 
+        if exp_pred_tensor is not None:
+            expert_pred_batch1 = sample_data(exp_pred_tensor, batch_size=10, window_len=10)
+            expert_pred_batch2 = sample_data(exp_pred_tensor, batch_size=10, window_len=10)
+
+            pred_mmd = pred_mmd_loss(expert_pred_batch1, expert_pred_batch2).item()
+            pred_mmd_list.append(pred_mmd)
+
+            _, trans_exp_pred = pred_encoder(expert_pred_batch1[...,:4])
+            _, trans_gen_pred = pred_encoder(expert_pred_batch2[...,:4])
+            batch, frames, agents, dim = trans_exp_pred.shape
+            pred_x = trans_exp_pred.reshape(batch * frames, agents, dim)
+            pred_y = trans_gen_pred.reshape(batch * frames, agents, dim)
+            sinkhorn_pred = sinkhorn_loss(pred_x, pred_y)
+            pred_sinkhorn_list.append(sinkhorn_pred.mean().item())
 
     print(f"\nExpert Prey MMD: {np.mean(prey_mmd_list)} ± {np.std(prey_mmd_list)}")
-    print(f"Expert Pred MMD: {np.mean(pred_mmd_list)} ± {np.std(pred_mmd_list)}\n")
-
     print(f"Expert Prey Sinkhorn: {np.mean(prey_sinkhorn_list)} ± {np.std(prey_sinkhorn_list)}")
-    print(f"Expert Pred Sinkhorn: {np.mean(pred_sinkhorn_list)} ± {np.std(pred_sinkhorn_list)}\n")
+    
+    if exp_pred_tensor is not None:
+        print(f"\nExpert Pred MMD: {np.mean(pred_mmd_list)} ± {np.std(pred_mmd_list)}")
+        print(f"Expert Pred Sinkhorn: {np.mean(pred_sinkhorn_list)} ± {np.std(pred_sinkhorn_list)}")
 
-    mmd_means = (np.mean(prey_mmd_list), np.mean(pred_mmd_list))
-    mmd_stds = (np.std(prey_mmd_list), np.std(pred_mmd_list))
+    mmd_means = (np.mean(prey_mmd_list), np.mean(pred_mmd_list) if exp_pred_tensor is not None else None)
+    mmd_stds = (np.std(prey_mmd_list), np.std(pred_mmd_list) if exp_pred_tensor is not None else None)
 
-    sinkhorn_means = (np.mean(prey_sinkhorn_list), np.mean(pred_sinkhorn_list))
-    sinkhorn_stds = (np.std(prey_sinkhorn_list), np.std(pred_sinkhorn_list))
-
+    sinkhorn_means = (np.mean(prey_sinkhorn_list), np.mean(pred_sinkhorn_list) if exp_pred_tensor is not None else None)
+    sinkhorn_stds = (np.std(prey_sinkhorn_list), np.std(pred_sinkhorn_list) if exp_pred_tensor is not None else None)
+    
     return mmd_means, mmd_stds, sinkhorn_means, sinkhorn_stds
+
 
 
 def plot_train_metrics(disc_metrics, dis_balance_factor, role="prey", save_dir=None):

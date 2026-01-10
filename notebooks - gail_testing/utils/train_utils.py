@@ -100,10 +100,10 @@ def discriminator_reward(discriminator, gen_tensor, mode="mean"):
 
 
 
-def optimize_es(pred_policy, prey_policy, 
-                role, module, mode,
+def optimize_es(role, module, mode,
                 discriminator, lr, 
                 sigma, num_perturbations, 
+                pred_policy=None, prey_policy=None,
                 init_pos=None, device="cuda"):
     
     if role == "prey":
@@ -149,7 +149,7 @@ def optimize_es(pred_policy, prey_policy,
 
 
 
-def pretrain_policy(policy, role, expert_data, 
+def pretrain_policy(policy, expert_data, role=None,
                      batch_size=256, epochs=250, 
                      lr=1e-3, deterministic=True, 
                      patience=10, device='cuda'):
@@ -168,7 +168,7 @@ def pretrain_policy(policy, role, expert_data,
         actions = expert_data[:, 0, 4]
 
     # make sure actions are float for MSE
-    actions = actions.to(torch.float32)
+    #actions = actions.to(torch.float32)
 
     dataset = TensorDataset(states, actions)
     val_size = int(0.2 * len(dataset))  # 80/20 split
@@ -262,10 +262,12 @@ def calculate_metrics(pred_policy=None, prey_policy=None, init_pool=None,
                       exp_pred_tensor=None, exp_prey_tensor=None,
                       pred_mmd_loss=None, prey_mmd_loss=None,
                       sinkhorn_loss=None, device=None):
+    
+    n_pred = 1 if pred_policy is not None else 0
 
     gen_pred_tensor, gen_prey_tensor = run_env_vectorized(prey_policy=prey_policy, 
                                                           pred_policy=pred_policy, 
-                                                          n_prey=32, n_pred=1, max_steps=100,
+                                                          n_prey=32, n_pred=n_pred, max_steps=100,
                                                           init_pool=init_pool)
     
     mmd_list = []
@@ -274,46 +276,55 @@ def calculate_metrics(pred_policy=None, prey_policy=None, init_pool=None,
         expert_prey_batch = sample_data(exp_prey_tensor, batch_size=10, window_len=10).to(device)
         generative_prey_batch = sample_data(gen_prey_tensor, batch_size=10, window_len=10).to(device)
 
-        expert_pred_batch = sample_data(exp_pred_tensor, batch_size=20, window_len=10).to(device)
-        generative_pred_batch = sample_data(gen_pred_tensor, batch_size=20, window_len=10).to(device)
-
-
-        # MMD Calculation
         with torch.no_grad():
             mmd_prey_metric = prey_mmd_loss.forward(expert_prey_batch, generative_prey_batch)
-            mmd_pred_metric = pred_mmd_loss.forward(expert_pred_batch, generative_pred_batch)
-        mmd_list.append((mmd_prey_metric.item(), mmd_pred_metric.item()))
-
-
-        # Sinkhorn Calculation
-        _, trans_exp_pred = pred_encoder(expert_pred_batch[...,:4])
-        _, trans_gen_pred = pred_encoder(generative_pred_batch[...,:4])
-        batch, frames, agents, dim = trans_exp_pred.shape
-        pred_x = trans_exp_pred.reshape(batch * frames, agents, dim)
-        pred_y = trans_gen_pred.reshape(batch * frames, agents, dim)
 
         _, trans_exp_prey = prey_encoder(expert_prey_batch[...,:5])
         _, trans_gen_prey = prey_encoder(generative_prey_batch[...,:5])
         batch, frames, agents, dim = trans_exp_prey.shape
         prey_x = trans_exp_prey.reshape(batch * frames, agents, dim)
         prey_y = trans_gen_prey.reshape(batch * frames, agents, dim)
-
-        sinkhorn_pred = sinkhorn_loss(pred_x, pred_y)
         sinkhorn_prey = sinkhorn_loss(prey_x, prey_y)
-        sinkhorn_list.append((sinkhorn_prey.mean().item(), sinkhorn_pred.mean().item()))
 
 
-    mmd_pred_mean = np.mean([mmd[1] for mmd in mmd_list])
-    mmd_pred_std = np.std([mmd[1] for mmd in mmd_list], ddof=1)
+        if n_pred > 0:
+            expert_pred_batch = sample_data(exp_pred_tensor, batch_size=20, window_len=10).to(device)
+            generative_pred_batch = sample_data(gen_pred_tensor, batch_size=20, window_len=10).to(device)
+
+            with torch.no_grad():
+                mmd_pred_metric = pred_mmd_loss.forward(expert_pred_batch, generative_pred_batch)
+
+            _, trans_exp_pred = pred_encoder(expert_pred_batch[...,:4])
+            _, trans_gen_pred = pred_encoder(generative_pred_batch[...,:4])
+            batch, frames, agents, dim = trans_exp_pred.shape
+            pred_x = trans_exp_pred.reshape(batch * frames, agents, dim)
+            pred_y = trans_gen_pred.reshape(batch * frames, agents, dim)
+            sinkhorn_pred = sinkhorn_loss(pred_x, pred_y)
+
+            mmd_list.append((mmd_prey_metric.item(), mmd_pred_metric.item()))
+            sinkhorn_list.append((sinkhorn_prey.mean().item(), sinkhorn_pred.mean().item()))
+        else:
+            mmd_list.append((mmd_prey_metric.item(), None))
+            sinkhorn_list.append((sinkhorn_prey.mean().item(), None))
+
 
     mmd_prey_mean = np.mean([mmd[0] for mmd in mmd_list])
-    mmd_prey_std = np.std([mmd[0] for mmd in mmd_list], ddof=1)
+    mmd_prey_std  = np.std([mmd[0] for mmd in mmd_list], ddof=1)
 
-    sinkhorn_pred_mean = np.mean([sinkhorn[1] for sinkhorn in sinkhorn_list])
-    sinkhorn_pred_std = np.std([sinkhorn[1] for sinkhorn in sinkhorn_list], ddof=1)
+    sinkhorn_prey_mean = np.mean([s[0] for s in sinkhorn_list])
+    sinkhorn_prey_std  = np.std([s[0] for s in sinkhorn_list], ddof=1)
 
-    sinkhorn_prey_mean = np.mean([sinkhorn[0] for sinkhorn in sinkhorn_list])
-    sinkhorn_prey_std = np.std([sinkhorn[0] for sinkhorn in sinkhorn_list], ddof=1)
+    if n_pred > 0:
+        mmd_pred_mean = np.mean([mmd[1] for mmd in mmd_list])
+        mmd_pred_std  = np.std([mmd[1] for mmd in mmd_list], ddof=1)
+
+        sinkhorn_pred_mean = np.mean([s[1] for s in sinkhorn_list])
+        sinkhorn_pred_std  = np.std([s[1] for s in sinkhorn_list], ddof=1)
+    else:
+        mmd_pred_mean = None
+        mmd_pred_std = None
+        sinkhorn_pred_mean = None
+        sinkhorn_pred_std = None
 
     return {
         "mmd_prey_mean": mmd_prey_mean,
@@ -361,65 +372,6 @@ def compute_wasserstein_loss(expert_scores, policy_scores, lambda_gp, gp):
     loss = policy_scores.mean() - expert_scores.mean()
     loss_gp = loss + lambda_gp * gp
     return loss, loss_gp
-
-
-def save_models(path,
-                prey_policy,
-                prey_discriminator,
-                optim_dis_prey,
-                expert_buffer, generative_buffer,
-                dis_metrics_prey,
-                es_metrics_prey):
-
-    save_dir = os.path.join(path, "final_output")
-    os.makedirs(save_dir, exist_ok=True)
-
-    torch.save(prey_policy, os.path.join(save_dir, "prey_policy.pt"))
-
-    torch.save(prey_discriminator, os.path.join(save_dir, "prey_disc.pt"))
-
-    torch.save(optim_dis_prey, os.path.join(save_dir, "optim_prey.pt"))
-
-    dis_metrics_prey = pd.DataFrame(dis_metrics_prey)
-
-    dis_metrics_prey.to_csv(os.path.join(save_dir, "dis_metrics_prey.csv"), index=False)
-
-    es_metrics_prey = pd.DataFrame(es_metrics_prey)
-
-    es_metrics_prey.to_csv(os.path.join(save_dir, "es_metrics_prey.csv"), index=False)
-
-    expert_buffer.save(save_dir, type="expert")
-    generative_buffer.save(save_dir, type="generative")
-
-    print("Models successfully saved!")
-    print("Training done!")
-
-
-def save_checkpoint(path, epoch,
-                    prey_policy,
-                    prey_discriminator,
-                    optim_dis_prey,
-                    expert_buffer, generative_buffer,
-                    dis_metrics_prey,
-                    es_metrics_prey):
-
-    ckpt_path = os.path.join(path, "ckpt")
-    ckpt_save = os.path.join(ckpt_path, f"ckpt_epoch{epoch+1:03d}")
-    os.makedirs(ckpt_save, exist_ok=True)
-
-    torch.save(prey_policy, os.path.join(ckpt_save, "prey_policy.pt"))
-
-    torch.save(prey_discriminator, os.path.join(ckpt_save, "prey_disc.pt"))
-
-    torch.save(optim_dis_prey, os.path.join(ckpt_save, "optim_prey.pt"))
-
-    generative_buffer.save(ckpt_save, type="generative")
-
-    torch.save(dis_metrics_prey, os.path.join(ckpt_save, "dis_metrics_prey.pt"))
-
-    torch.save(es_metrics_prey, os.path.join(ckpt_save, "es_metrics_prey.pt"))
-
-    print("Checkpoint successfully saved! \n ")
     
 
 def remaining_time(num_generations, last_epoch_duration, current_generation):
@@ -434,36 +386,6 @@ def remaining_time(num_generations, last_epoch_duration, current_generation):
     sec = int(last_epoch_duration % 60)
     epoch_str = f"{min}:{sec:02d}"
     return estimated_time, epoch_str
-    
-
-class EarlyStoppingWasserstein:
-    def __init__(self, patience=10, start_es=50):
-        self.patience = patience
-        self.start_es = start_es
-        self.best_dist = float("inf")
-        self.epochs_no_improve = 0
-        self.early_stop = False
-
-    def __call__(self, loss, generation, role="prey"):
-        if generation < self.start_es:
-            return False
-
-        dist = abs(loss)
-
-        if self.best_dist == float("inf"):
-            self.best_dist = dist
-            return False
-
-        if dist < self.best_dist:
-            self.best_dist = dist
-            self.epochs_no_improve = 0
-        else:
-            self.epochs_no_improve += 1
-            if self.epochs_no_improve >= self.patience:
-                print(f"[{role.upper()}] Early stopping triggered: No improvement for {self.patience} epochs.")
-                self.early_stop = True
-
-        return self.early_stop
 
 
 

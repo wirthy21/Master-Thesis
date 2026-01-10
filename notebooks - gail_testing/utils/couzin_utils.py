@@ -424,15 +424,6 @@ def run_circular_simulation(
     clockwise=False,            # CHANGED: Drehrichtung
     device="cpu"
 ):
-    """
-    Simple 'circular/orbit' behavior:
-    - Agents orbit around the center with constant speed
-    - A radial correction term keeps them near a target radius
-    - Outputs match run_couzin_simulation: (pred_tensor, prey_tensor, metrics_list)
-
-    NOTE: This simulation is intended to run on CPU. The returned tensors are CPU tensors,
-          consistent with run_couzin_simulation in this file.
-    """
 
     swarm = [Agent(i, constant_speed, area_width, area_height) for i in range(n)]
     sharks = [Agent(i, shark_speed, area_width, area_height) for i in range(number_of_sharks)]
@@ -605,7 +596,6 @@ def run_circular_simulation(
         # --- Build tensors for this step (state is s_t, action is dtheta from s_t -> s_{t+1}) ---
         pred_tensor, prey_tensor, metrics = get_state_tensors(
             prey_log[t], predator_log[t],
-            prey_actions=prey_actions, shark_actions=shark_actions,
             area_width=area_width, area_height=area_height,
             constant_speed=constant_speed, shark_speed=shark_speed,
             number_of_sharks=number_of_sharks
@@ -640,6 +630,7 @@ def run_circular_simulation(
 
     init_pool = np.stack([xs, ys], axis=-1).astype(np.float32)
     init_pool = init_pool[50:] # cut 50 off due to random init
+    init_pool = torch.from_numpy(init_pool).to(torch.float32)
 
     return final_pred_tensor, final_prey_tensor, metrics_list, init_pool
 
