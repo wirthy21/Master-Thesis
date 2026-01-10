@@ -464,3 +464,45 @@ class EarlyStoppingWasserstein:
                 self.early_stop = True
 
         return self.early_stop
+
+
+
+def save_hyperparameter(save_dir,
+                        max_steps=None,
+                        num_generations=None,
+                        gamma=None,
+                        lr_policy=None,
+                        num_perturbations=None,
+                        sigma=None,
+                        deterministic=None,
+                        dis_balance_factor=None,
+                        noise=None,
+                        lr_disc=None,
+                        lambda_gp=None,
+                        performance_eval=None):
+    path = os.path.join(save_dir, "hyperparameters.txt")
+    with open(path, "w") as f:
+        f.write("# === Hyperparameters ===\n\n")
+
+        f.write(f"# Expert\n")
+        f.write(f"max_steps = {max_steps}\n\n")
+
+        f.write(f"# Training\n")
+        f.write(f"num_generations = {num_generations}\n")
+        f.write(f"gamma = {gamma}\n\n")
+
+        f.write(f"# Policy\n")
+        f.write(f"lr_policy = {lr_policy}\n")
+        f.write(f"num_perturbations = {num_perturbations}\n")
+        f.write(f"sigma = {sigma}\n")
+        f.write(f"deterministic = {deterministic}\n\n")
+
+        f.write(f"# Discriminator\n")
+        f.write(f"dis_balance_factor = {dis_balance_factor}\n")
+        f.write(f"noise = {noise}\n")
+        f.write(f"lr_disc = {lr_disc}\n")
+        f.write(f"lambda_gp = {lambda_gp}\n\n")
+
+        f.write(f"performance_eval = {performance_eval}\n\n")
+
+    return path
