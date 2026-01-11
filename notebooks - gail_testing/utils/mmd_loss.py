@@ -37,7 +37,7 @@ class MMDLoss(nn.Module):
         self.kernel = kernel
 
     def encode_transitions(self, tensor):
-        states = tensor[..., :5] if self.role == "prey" else tensor[..., :4]
+        states = tensor[..., :-1]
         _, transitions = self.encoder(states)
         features = transitions.reshape(-1, transitions.size(-1))
         return features

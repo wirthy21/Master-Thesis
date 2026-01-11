@@ -2,7 +2,8 @@ import os
 import math
 import torch
 import numpy as np
-from marl_aquarium.aquarium_v0 import parallel_env
+import custom_marl_aquarium
+#from marl_aquarium.aquarium_v0 import parallel_env
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # [Agent, scaled_position_x, scaled_position_y, scaled_direction (-180:180), scaled_speed]
@@ -46,69 +47,84 @@ def get_features(global_state, max_speed=15.0):
     mask = ~np.eye(n, dtype=bool) # shape (N, N)
     neigh = features[mask].reshape(n, n-1, 5)
 
-    prey_tensor = torch.from_numpy(neigh) 
+    pred_tensor = torch.from_numpy(neigh[0]).unsqueeze(0)
+    prey_tensor = torch.from_numpy(neigh[1:]) 
     
-    return prey_tensor
+    return pred_tensor, prey_tensor
 
 
 
-def continuous_to_discrete(actions, action_count=360):
+def continuous_to_discrete(actions, action_count=360, role="predator"):
     low, high = -math.pi, math.pi
     scaled = (actions - low) * (action_count - 1) / (high - low)
     discrete_action = scaled.round().long().clamp(0, action_count - 1)
-    return discrete_action.flatten().tolist()
+
+    if role == "predator":
+        return discrete_action.item()
+    else:
+        return discrete_action.flatten().tolist()
 
 
-def parallel_get_rollouts(env, prey_policy=None, clip_length=30):
+def parallel_get_rollouts(env, pred_policy=None, prey_policy=None, clip_length=30):
     
-    prey_tensors = []
+    pred_tensors, prey_tensors = [], []
     
     for frame_idx in range(clip_length):
 
         global_state = env.state().item()
-        prey_tensor = get_features(global_state)
+        pred_tensor, prey_tensor = get_features(global_state)
+        pred_tensors.append(pred_tensor)
         prey_tensors.append(prey_tensor)
 
+        pred_states = pred_tensor[..., :4]
+        action_pred, mu_pred, sigma_pred, weights_pred = pred_policy.forward(pred_states)
+        dis_pred = continuous_to_discrete(action_pred, 360, role='predator')
+
         prey_states = prey_tensor[..., :4]
-        prey_actions = prey_policy.forward(prey_states)
-        dis_prey = continuous_to_discrete(prey_actions, 360)
+        pred_gain_weights = get_pred_gain(prey_states, pred_policy)
+        agg_action, action_prey, mu_prey, sigma_prey, weights_prey, pred_gain = prey_policy.forward(prey_states, pred_gain_weights)
+        dis_prey = continuous_to_discrete(agg_action, 360, role='prey')
 
         action_dict = {}
         for agent in env.agents:
-            idx = int(agent.split("_")[1])
-            action_dict[agent] = dis_prey[idx]
+            if agent.startswith("prey"):
+                idx = int(agent.split("_")[1])
+                action_dict[agent] = dis_prey[idx]
+            elif agent == "predator_0":
+                action_dict[agent] = dis_pred
 
         env.step(action_dict)
 
+    pred_tensor = torch.stack(pred_tensors, dim=0)
     prey_tensor = torch.stack(prey_tensors, dim=0).squeeze(1)
 
-    return prey_tensor.float()
+    return pred_tensor.float(), prey_tensor.float()
 
 
 # One env for each thread
-def make_env(pred_count=0, use_walls=True, start_frame_pool=None):
-    env = parallel_env(predator_count=pred_count, use_walls=use_walls)
+def make_env(use_walls=True, start_frame_pool=None):
+    env = parallel_env(use_walls=use_walls)
     positions = start_frame_pool.sample(n=1)
     obs, infos = env.reset(options=positions)
     return env
 
 
-def generate_trajectories(buffer, start_frame_pool, prey_policy, clip_length=30, num_generative_episodes=1, use_walls=True):
+def generate_trajectories(buffer, start_frame_pool, pred_policy, prey_policy, clip_length=30, num_generative_episodes=1, use_walls=True):
 
     with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
         futures = [executor.submit(parallel_get_rollouts, make_env(use_walls=use_walls, start_frame_pool=start_frame_pool), 
-                                   prey_policy, clip_length) for i in range(num_generative_episodes)]
+                                   pred_policy, prey_policy, clip_length) for i in range(num_generative_episodes)]
 
     successful = 0
     for future in as_completed(futures):
         try:
-            prey_tensor = future.result()
-            buffer.add_generative(prey_tensor)
+            pred_tensor, prey_tensor = future.result()
+            buffer.add_generative(pred_tensor, prey_tensor)
             successful += 1
         except KeyError:
             continue
     missing = num_generative_episodes - successful
     if missing > 0:
         generate_trajectories(buffer=buffer, start_frame_pool=start_frame_pool,
-                              prey_policy=prey_policy, clip_length=clip_length, 
-                              num_generative_episodes=missing, use_walls=use_walls)
+                              pred_policy=pred_policy, prey_policy=prey_policy,
+                              clip_length=clip_length, num_generative_episodes=missing, use_walls=use_walls)

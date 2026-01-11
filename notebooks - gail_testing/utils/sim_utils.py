@@ -11,6 +11,8 @@ from numpy.linalg import *
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from copy import deepcopy
+from utils.eval_utils import compute_polarization, compute_angular_momentum, degree_of_sparsity, distance_to_predator, escape_alignment
+
 
 
 class Agent:
@@ -26,11 +28,10 @@ class Agent:
         self.pos += self.vel * step_size
 
 
-def apply_turnrate_on_theta(agent, action, speed, max_turn=np.pi):
+def apply_turnrate_on_theta(agent, action, speed, max_turn):
     dtheta = (action - 0.5) * 2.0 * max_turn
-    agent.theta = (agent.theta + dtheta + np.pi) % (2*np.pi) - np.pi
+    agent.theta = agent.theta + dtheta
     agent.vel = np.array([np.cos(agent.theta), np.sin(agent.theta)]) * speed
-
 
 
 def enforce_walls(agent, area_width, area_height):
@@ -62,7 +63,7 @@ def enforce_walls(agent, area_width, area_height):
 
 def get_state_tensors(prey_log_step, pred_log_step, n_pred=1, 
                       area_width=50, area_height=50,
-                      prey_speed=5, pred_speed=5, max_speed_norm=15,
+                      prey_speed=5, pred_speed=5, max_speed_norm=5,
                       mask=None):
     
     combined = np.vstack([pred_log_step, prey_log_step]).astype(np.float32)  # [N,6]
@@ -102,7 +103,30 @@ def get_state_tensors(prey_log_step, pred_log_step, n_pred=1,
         flag[:, :n_pred, 0] = 1
         prey_tensor = torch.cat([flag, prey_tensor], dim=-1)
 
-    return pred_tensor, prey_tensor
+
+    polarization = compute_polarization(vxs, vys)
+    angular_momentum_val = compute_angular_momentum(xs, ys, vxs, vys)
+    sparsity = degree_of_sparsity(xs, ys)
+    dist_pred = distance_to_predator(xs, ys)
+    escape_align = escape_alignment(xs, ys, vxs, vys)
+
+    metrics = {
+        "polarization": polarization,
+        "angular_momentum": angular_momentum_val,
+        "degree_of_sparsity": sparsity,
+        "distance_to_predator": dist_pred,
+        "escape_alignment": escape_align,
+        "xs": xs_scaled,
+        "ys": ys_scaled,
+        "dx": dx,
+        "dy": dy,
+        "vxs": vxs,
+        "vys": vys,
+        "features": features,
+    }
+
+
+    return pred_tensor, prey_tensor, metrics
 
 
 def apply_init_pool(init_pool, pred, prey, area_width=50, area_height=50):
@@ -130,18 +154,19 @@ def apply_init_pool(init_pool, pred, prey, area_width=50, area_height=50):
 
 
 def run_env_simulation(prey_policy=None, pred_policy=None, 
-                       n_prey=32, n_pred=1, step_size=1.0,
+                       n_prey=32, n_pred=1, step_size=0.5,
                        max_steps=100, seed=None, deterministic=False,
-                       prey_speed=15, pred_speed=15, 
+                       prey_speed=5, pred_speed=5, 
                        area_width=50, area_height=50, 
+                       max_turn=np.pi,
                        visualization='off', init_pool=None):
 
     if seed is not None:
         np.random.seed(seed) # agent init
         torch.manual_seed(seed) # CPU
 
-    prey_policy = deepcopy(prey_policy).to("cpu")
-    pred_policy = deepcopy(pred_policy).to("cpu") if pred_policy is not None else None
+    prey_policy = deepcopy(prey_policy)
+    pred_policy = deepcopy(pred_policy) if pred_policy is not None else None
 
     prey = [Agent(i, prey_speed, area_width, area_height) for i in range(n_prey)]
     pred = [Agent(i, pred_speed, area_width, area_height) for i in range(n_pred)]
@@ -162,6 +187,7 @@ def run_env_simulation(prey_policy=None, pred_policy=None,
         fig, ax = plt.subplots()
 
     mask = ~np.eye(n_agents, dtype=bool)
+    metrics_list = []
     t = 0
 
     while t < max_steps:
@@ -215,11 +241,13 @@ def run_env_simulation(prey_policy=None, pred_policy=None,
 
             plt.pause(0.00000001)
 
-        pred_states, prey_states = get_state_tensors(prey_log_t, predator_log_t, 
+        pred_states, prey_states, metrics = get_state_tensors(prey_log_t, predator_log_t, 
                                                      n_pred=n_pred, 
                                                      area_width=area_width, area_height=area_height, 
                                                      prey_speed=prey_speed, pred_speed=pred_speed,
                                                      mask=mask)
+        
+        metrics_list.append(metrics)
 
         if n_pred > 0:
             with torch.inference_mode():
@@ -239,25 +267,27 @@ def run_env_simulation(prey_policy=None, pred_policy=None,
 
         prey_actions = prey_actions.squeeze(-1).detach().cpu().numpy()
         for i, agent in enumerate(prey):
-            apply_turnrate_on_theta(agent, prey_actions[i], prey_speed)
+            apply_turnrate_on_theta(agent, prey_actions[i], prey_speed, max_turn)
 
         if n_pred > 0:
             pred_actions = pred_actions.squeeze(-1).detach().cpu().numpy()
             for i, predator in enumerate(pred):
-                apply_turnrate_on_theta(predator, pred_actions[i], pred_speed)
+                apply_turnrate_on_theta(predator, pred_actions[i], pred_speed, max_turn)
 
         for agent in prey:
-            agent.update_position(step_size=step_size)
             enforce_walls(agent, area_width, area_height)
+            agent.update_position(step_size=step_size)
+            
 
         if n_pred > 0:
             for predator in pred:
-                predator.update_position(step_size=step_size)
                 enforce_walls(predator, area_width, area_height)
+                predator.update_position(step_size=step_size)
+                
 
         t += 1
 
         prey_tensor = prey_traj[:t]
         pred_tensor = pred_traj[:t] if n_pred > 0 else None
 
-    return pred_tensor, prey_tensor
+    return pred_tensor, prey_tensor, metrics_list

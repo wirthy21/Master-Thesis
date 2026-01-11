@@ -189,10 +189,7 @@ def train_encoder(encoder, projector, aug, exp_tensor, epochs, optimizer, role="
         expert_batch = sample_data(exp_tensor, batch_size=10, window_len=10)
         expert_batch = expert_batch.to(device, non_blocking=True)
 
-        if role == "prey":
-            states = expert_batch[..., :5]
-        else:
-            states = expert_batch[..., :4]
+        states = expert_batch[..., :-1]
 
         x1, neigh_mask1, feat_mask1 = aug(states)
         x2, neigh_mask2, feat_mask2 = aug(states)

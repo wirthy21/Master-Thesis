@@ -21,7 +21,7 @@ def velocity_from_theta(theta, speed):
     return torch.stack([vx, vy], dim=-1)
 
 
-def apply_turnrate(theta, action, max_turn=torch.pi):
+def apply_turnrate(theta, action, max_turn):
     dtheta = (action - 0.5) * 2.0 * max_turn
     theta = theta + dtheta
     return (theta + torch.pi) % (2*torch.pi) - torch.pi
@@ -43,7 +43,7 @@ def enforce_walls(pos, theta, area_width, area_height):
 
 def get_state_tensors(prey_log_step, pred_log_step, n_pred=1, 
                       area_width=50, area_height=50, 
-                      max_speed_norm=15, neigh_idx=None):
+                      max_speed_norm=5, neigh_idx=None):
     
     device = prey_log_step.device
     combined = torch.cat([pred_log_step, prey_log_step], dim=1)
@@ -91,7 +91,7 @@ run_env_vectorized
 Runs env with single policy for prey and predator each, vectorized.
 '''
 
-def init_positions_in_env(init_pool, area_width=2160, area_height=2160, device="cuda"):
+def init_positions_in_env(init_pool, area_width=50, area_height=50, device="cuda"):
     steps, agents, coordinates = init_pool.shape
 
     idx = torch.randint(steps, (), device=device)            # scalar
@@ -109,10 +109,10 @@ def init_positions_in_env(init_pool, area_width=2160, area_height=2160, device="
 
 def run_env_vectorized(prey_policy=None, pred_policy=None, 
                        n_prey=32, n_pred=1, 
-                       step_size=1.0, max_steps=100, 
+                       step_size=0.5, max_steps=100, 
                        deterministic=False,
                        prey_speed=5, pred_speed=5, 
-                       area_width=2160, area_height=2160, 
+                       area_width=50, area_height=50, max_turn=np.pi, 
                        init_pool=None, device="cuda"):
 
     n_agents = n_prey + n_pred
@@ -158,7 +158,7 @@ def run_env_vectorized(prey_policy=None, pred_policy=None,
             pred_states, prey_states = get_state_tensors(prey_log_t.unsqueeze(0), predator_log_t.unsqueeze(0),
                                                          n_pred=n_pred,
                                                          area_width=area_width, area_height=area_height,
-                                                         max_speed_norm=15,
+                                                         max_speed_norm=5,
                                                          neigh_idx=neigh_idx)
             pred_states = pred_states[0]
             prey_states = prey_states[0]
@@ -180,13 +180,13 @@ def run_env_vectorized(prey_policy=None, pred_policy=None,
                 prey_traj[t, :, :, 4:] = prey_actions.unsqueeze(1).expand(-1, n_neigh, -1)
 
 
-            theta[n_pred:] = apply_turnrate(theta[n_pred:], prey_actions.squeeze(-1))
+            theta[n_pred:] = apply_turnrate(theta[n_pred:], prey_actions.squeeze(-1), max_turn)
             if n_pred > 0:
-                theta[:n_pred] = apply_turnrate(theta[:n_pred], pred_actions.squeeze(-1))
+                theta[:n_pred] = apply_turnrate(theta[:n_pred], pred_actions.squeeze(-1), max_turn)
 
             vel = velocity_from_theta(theta, speed)
-            positions = positions + vel * float(step_size)
             positions, theta = enforce_walls(positions, theta, area_width, area_height)
+            positions = positions + vel * float(step_size)
 
             t += 1
 
@@ -201,7 +201,7 @@ Runs env with pertubated policy for prey and predator each, vectorized.
 '''
 
 
-def init_positions(init_pool, batch=32, area_width=2160, area_height=2160,
+def init_positions(init_pool, batch=32, area_width=50, area_height=50,
                    mode="dual", device="cuda"):
     steps, agents, coordinates = init_pool.shape
 
@@ -277,10 +277,10 @@ def batch_policy_forward(policy, states, pert_list, deterministic=False):
 
 def run_batch_env(prey_policy=None, pred_policy=None, 
                     n_prey=32, n_pred=1, 
-                    step_size=1.0, batch=32,
+                    step_size=0.5, batch=32,
                     max_steps=100, deterministic=False,
                     prey_speed=5, pred_speed=5, 
-                    area_width=2160, area_height=2160, 
+                    area_width=50, area_height=50, max_turn=np.pi,
                     init_pos=None, pert_list=None, role="prey", device="cuda"):
 
     n_agents = n_prey + n_pred
@@ -323,7 +323,7 @@ def run_batch_env(prey_policy=None, pred_policy=None,
             pred_states, prey_states = get_state_tensors(prey_log_t, predator_log_t,
                                                          n_pred=n_pred,
                                                          area_width=area_width, area_height=area_height,
-                                                         max_speed_norm=15,
+                                                         max_speed_norm=5,
                                                          neigh_idx=neigh_idx)
 
             if n_pred > 0:
@@ -374,13 +374,13 @@ def run_batch_env(prey_policy=None, pred_policy=None,
                 prey_traj[:, t, :, :, :4] = prey_states
                 prey_traj[:, t, :, :, 4:] = prey_actions.unsqueeze(3).expand(-1, -1, n_neigh, -1)
 
-            theta[:, n_pred:] = apply_turnrate(theta[:, n_pred:], prey_actions.squeeze(-1))
+            theta[:, n_pred:] = apply_turnrate(theta[:, n_pred:], prey_actions.squeeze(-1), max_turn)
             if n_pred > 0:
-                theta[:, :n_pred] = apply_turnrate(theta[:, :n_pred], pred_actions.squeeze(-1))
+                theta[:, :n_pred] = apply_turnrate(theta[:, :n_pred], pred_actions.squeeze(-1), max_turn)
 
             vel = velocity_from_theta(theta, speed)
-            positions = positions + vel * float(step_size)
             positions, theta = enforce_walls(positions, theta, area_width, area_height)
+            positions = positions + vel * float(step_size)
 
             t += 1
 
@@ -391,7 +391,8 @@ def run_batch_env(prey_policy=None, pred_policy=None,
 
 def apply_perturbations(prey_policy, pred_policy, init_pos, 
                         role, module, device,
-                        sigma, num_perturbations):
+                        sigma, num_perturbations,
+                        settings_batch_env):
     
     pert_list, epsilons = policy_perturbation(pred_policy, prey_policy,
                                             role=role, module=module,
@@ -399,8 +400,21 @@ def apply_perturbations(prey_policy, pred_policy, init_pos,
                                             device=device)
     
     n_pred = 1 if pred_policy is not None else 0
-    pred_rollouts, prey_rollouts = run_batch_env(prey_policy=prey_policy, pred_policy=pred_policy,
-                                        batch=2*num_perturbations, init_pos=init_pos, n_pred=n_pred,
-                                        pert_list=pert_list, role=role)
+
+    # (height, width, prey_speed, pred_speed, step_size, max_turn, pert_steps)
+    pred_rollouts, prey_rollouts = run_batch_env(prey_policy=prey_policy, 
+                                                 pred_policy=pred_policy,
+                                                 n_pred=n_pred,
+                                                 step_size=settings_batch_env[4],
+                                                 batch=2*num_perturbations, 
+                                                 max_steps=settings_batch_env[6],
+                                                 prey_speed=settings_batch_env[2],
+                                                 pred_speed=settings_batch_env[3],
+                                                 area_width=settings_batch_env[1],
+                                                 area_height=settings_batch_env[0],
+                                                 max_turn=settings_batch_env[5],
+                                                 init_pos=init_pos, 
+                                                 pert_list=pert_list, 
+                                                 role=role)
     
     return pred_rollouts, prey_rollouts, epsilons

@@ -273,7 +273,7 @@ def run_couzin_simulation(
         dtheta_prey = wrap_to_pi(prey_theta_new - prey_theta_prev)
 
         prey_actions = np.clip(dtheta_prey / (2.0 * max_turn_prey) + 0.5, 0.0, 1.0).astype(np.float32)
-
+        
         if number_of_sharks > 0:
             shark_theta_new = np.array([np.arctan2(s.vel[1], s.vel[0]) for s in sharks], dtype=np.float32)
             dtheta_shark = wrap_to_pi(shark_theta_new - shark_theta_prev)
@@ -338,7 +338,7 @@ def run_couzin_simulation(
 
 def get_state_tensors(prey_log_step, shark_log_step, 
                       area_width=50, area_height=50, 
-                      constant_speed=15, shark_speed=15, 
+                      constant_speed=5, shark_speed=5, 
                       number_of_sharks=1):
 
     combined = np.vstack([shark_log_step, prey_log_step])
@@ -417,12 +417,11 @@ def run_circular_simulation(
     shark_speed=5,
     area_width=50,
     area_height=50,
-    orbit_radius=None,          # CHANGED: gewünschter Kreisradius (None => automatisch)
-    orbit_radius_shark=None,    # CHANGED: optional eigener Radius für Sharks
-    radial_gain=1.0,            # CHANGED: wie stark zur Soll-Bahn gezogen wird
-    radial_gain_shark=1.0,      # CHANGED
-    clockwise=False,            # CHANGED: Drehrichtung
-    device="cpu"
+    orbit_radius=None,        
+    orbit_radius_shark=None,   
+    radial_gain=1.0,         
+    radial_gain_shark=1.0,     
+    clockwise=False,           
 ):
 
     swarm = [Agent(i, constant_speed, area_width, area_height) for i in range(n)]

@@ -25,8 +25,8 @@ def get_expert_values(exp_pred_tensor=None, exp_prey_tensor=None,
         prey_mmd = prey_mmd_loss(expert_prey_batch1, expert_prey_batch2).item()
         prey_mmd_list.append(prey_mmd)
 
-        _, trans_exp_prey = prey_encoder(expert_prey_batch1[...,:5])
-        _, trans_gen_prey = prey_encoder(expert_prey_batch2[...,:5])
+        _, trans_exp_prey = prey_encoder(expert_prey_batch1[..., :-1])
+        _, trans_gen_prey = prey_encoder(expert_prey_batch2[..., :-1])
         batch, frames, agents, dim = trans_exp_prey.shape
         prey_x = trans_exp_prey.reshape(batch * frames, agents, dim)
         prey_y = trans_gen_prey.reshape(batch * frames, agents, dim)
@@ -40,8 +40,8 @@ def get_expert_values(exp_pred_tensor=None, exp_prey_tensor=None,
             pred_mmd = pred_mmd_loss(expert_pred_batch1, expert_pred_batch2).item()
             pred_mmd_list.append(pred_mmd)
 
-            _, trans_exp_pred = pred_encoder(expert_pred_batch1[...,:4])
-            _, trans_gen_pred = pred_encoder(expert_pred_batch2[...,:4])
+            _, trans_exp_pred = pred_encoder(expert_pred_batch1[..., :-1])
+            _, trans_gen_pred = pred_encoder(expert_pred_batch2[..., :-1])
             batch, frames, agents, dim = trans_exp_pred.shape
             pred_x = trans_exp_pred.reshape(batch * frames, agents, dim)
             pred_y = trans_gen_pred.reshape(batch * frames, agents, dim)

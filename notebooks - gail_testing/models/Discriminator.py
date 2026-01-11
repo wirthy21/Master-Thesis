@@ -20,7 +20,7 @@ class Discriminator(nn.Module):
         self.fc4 = nn.Linear(32, 1)
 
     def encoder_forward(self, tensor):
-        states = tensor[..., :5] if self.role == "prey" else tensor[..., :4]
+        states = tensor[..., :-1]
         _, trans = self.encoder(states)
         batch, frames_minus_one, agent, neigh_rep = trans.shape
         feats = trans.reshape(batch * frames_minus_one * agent, neigh_rep)
@@ -50,8 +50,9 @@ class Discriminator(nn.Module):
             expert_batch = expert_batch.clone()
             policy_batch = policy_batch.clone()
 
-            expert_batch = expert_batch + torch.randn_like(expert_batch) * noise_term 
-            policy_batch = policy_batch + torch.randn_like(policy_batch) * noise_term
+            # noise only on states
+            expert_batch[..., :-1] += torch.randn_like(expert_batch[..., :-1]) * noise_term
+            policy_batch[..., :-1] += torch.randn_like(policy_batch[..., :-1]) * noise_term
 
         exp_scores = self.forward(expert_batch)
         gen_scores = self.forward(policy_batch)

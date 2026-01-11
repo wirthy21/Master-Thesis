@@ -53,12 +53,7 @@ def gradient_estimate(theta, rewards_norm, epsilons, sigma, lr, num_perturbation
 def discriminator_reward(discriminator, gen_tensor, mode="mean"):
     matrix = discriminator(gen_tensor)  # expected: (B, F-1, A) or (B, F-1, A, ...)
 
-    # ensure batch is dim0
-    if matrix.ndim == 0:
-        raise RuntimeError("Discriminator returned scalar. It must return at least (B, ...)")
-
     if mode == "mean":
-        # mean over all dims except batch
         reduce_dims = tuple(range(1, matrix.ndim))
         scores = matrix.mean(dim=reduce_dims)  # (B,)
         return scores
@@ -96,15 +91,14 @@ def discriminator_reward(discriminator, gen_tensor, mode="mean"):
         den = weight.sum(dim=(1, 2)).clamp_min(1e-12)    # (B,)
         return num / den                                 # (B,)
 
-    raise ValueError(f"Unknown mode: {mode}")
-
 
 
 def optimize_es(role, module, mode,
                 discriminator, lr, 
                 sigma, num_perturbations, 
                 pred_policy=None, prey_policy=None,
-                init_pos=None, device="cuda"):
+                init_pos=None, device="cuda",
+                settings_batch_env=None):
     
     if role == "prey":
         network = prey_policy.pairwise if module == 'pairwise' else prey_policy.attention
@@ -115,12 +109,13 @@ def optimize_es(role, module, mode,
 
     pred_rollouts, prey_rollouts, epsilons = apply_perturbations(prey_policy, pred_policy, init_pos,
                                 role=role, module=module, device=device,
-                                sigma=sigma, num_perturbations=num_perturbations)
+                                sigma=sigma, num_perturbations=num_perturbations,
+                                settings_batch_env=settings_batch_env)
     
     if role == "prey":
-        reward = discriminator_reward(discriminator, prey_rollouts, mode="top")
+        reward = discriminator_reward(discriminator, prey_rollouts, mode=mode)
     else:
-        reward = discriminator_reward(discriminator, pred_rollouts, mode="top")
+        reward = discriminator_reward(discriminator, pred_rollouts, mode=mode)
 
     reward_pos = reward[:num_perturbations]
     reward_neg = reward[num_perturbations:]
@@ -160,15 +155,8 @@ def pretrain_policy(policy, expert_data, role=None,
     n, frames, agents, neigh, features = expert_data.shape
     expert_data = expert_data.reshape(n * frames * agents, neigh, features)
     
-    if role == "prey":
-        states  = expert_data[..., :5]
-        actions = expert_data[:, 0, 5]
-    else:
-        states  = expert_data[..., :4]
-        actions = expert_data[:, 0, 4]
-
-    # make sure actions are float for MSE
-    #actions = actions.to(torch.float32)
+    states  = expert_data[..., :-1]
+    actions = expert_data[:, 0, -1]
 
     dataset = TensorDataset(states, actions)
     val_size = int(0.2 * len(dataset))  # 80/20 split
@@ -254,20 +242,29 @@ def pretrain_policy(policy, expert_data, role=None,
     plt.tight_layout()
     plt.show()
 
-    return policy.load_state_dict(best_state)
+    policy.load_state_dict(best_state)
+    return policy
 
 
 def calculate_metrics(pred_policy=None, prey_policy=None, init_pool=None, 
                       pred_encoder=None, prey_encoder=None,
                       exp_pred_tensor=None, exp_prey_tensor=None,
                       pred_mmd_loss=None, prey_mmd_loss=None,
-                      sinkhorn_loss=None, device=None):
+                      sinkhorn_loss=None, device=None, env_settings=None):
     
     n_pred = 1 if pred_policy is not None else 0
 
+    # (height, width, prey_speed, pred_speed, step_size, max_turn, pert_steps)
     gen_pred_tensor, gen_prey_tensor = run_env_vectorized(prey_policy=prey_policy, 
                                                           pred_policy=pred_policy, 
-                                                          n_prey=32, n_pred=n_pred, max_steps=100,
+                                                          n_prey=32, n_pred=n_pred, 
+                                                          step_size=env_settings[4],
+                                                          max_steps=200,
+                                                          prey_speed=env_settings[2],
+                                                          pred_speed=env_settings[3],
+                                                          area_width=env_settings[1],
+                                                          area_height=env_settings[0],
+                                                          max_turn=env_settings[5],
                                                           init_pool=init_pool)
     
     mmd_list = []
@@ -279,8 +276,8 @@ def calculate_metrics(pred_policy=None, prey_policy=None, init_pool=None,
         with torch.no_grad():
             mmd_prey_metric = prey_mmd_loss.forward(expert_prey_batch, generative_prey_batch)
 
-        _, trans_exp_prey = prey_encoder(expert_prey_batch[...,:5])
-        _, trans_gen_prey = prey_encoder(generative_prey_batch[...,:5])
+        _, trans_exp_prey = prey_encoder(expert_prey_batch[..., :-1])
+        _, trans_gen_prey = prey_encoder(generative_prey_batch[..., :-1])
         batch, frames, agents, dim = trans_exp_prey.shape
         prey_x = trans_exp_prey.reshape(batch * frames, agents, dim)
         prey_y = trans_gen_prey.reshape(batch * frames, agents, dim)
@@ -294,8 +291,8 @@ def calculate_metrics(pred_policy=None, prey_policy=None, init_pool=None,
             with torch.no_grad():
                 mmd_pred_metric = pred_mmd_loss.forward(expert_pred_batch, generative_pred_batch)
 
-            _, trans_exp_pred = pred_encoder(expert_pred_batch[...,:4])
-            _, trans_gen_pred = pred_encoder(generative_pred_batch[...,:4])
+            _, trans_exp_pred = pred_encoder(expert_pred_batch[..., :-1])
+            _, trans_gen_pred = pred_encoder(generative_pred_batch[..., :-1])
             batch, frames, agents, dim = trans_exp_pred.shape
             pred_x = trans_exp_pred.reshape(batch * frames, agents, dim)
             pred_y = trans_gen_pred.reshape(batch * frames, agents, dim)
