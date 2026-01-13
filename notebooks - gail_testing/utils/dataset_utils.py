@@ -196,7 +196,7 @@ def get_expert_features(frame, width, height, max_speed=15):
     pred_tensor = torch.from_numpy(neigh[0]).unsqueeze(0)
     prey_tensor = torch.from_numpy(neigh[1:]) # shape (N-1, N-1, 5)
 
-    return pred_tensor, prey_tensor, scaled_xs.tolist(), scaled_ys.tolist()
+    return pred_tensor, prey_tensor, scaled_xs.tolist(), scaled_ys.tolist(), thetas.tolist()
 
 
 def get_expert_tensors(filtered_frames, extracted_windows, width, height, max_speed=15, window_size=5):
@@ -223,12 +223,12 @@ def get_expert_tensors(filtered_frames, extracted_windows, width, height, max_sp
         frame_coordinates = []
 
         for dets in window_detections:
-            pred_tensor, prey_tensor, xs, ys = get_expert_features(dets, width, height, max_speed)
+            pred_tensor, prey_tensor, xs, ys, thetas = get_expert_features(dets, width, height, max_speed)
 
             preds.append(pred_tensor)
             preys.append(prey_tensor)
             
-            xy = torch.from_numpy(np.stack([xs, ys], axis=-1)).float()
+            xy = torch.from_numpy(np.stack([xs, ys, thetas], axis=-1)).float()
             frame_coordinates.append(xy)
 
         pred_windows.append(torch.stack(preds, dim=0))

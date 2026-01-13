@@ -92,6 +92,7 @@ def run_couzin_simulation(
     pred_tensor_list = []
     prey_tensor_list = []
     metrics_list = []
+    action_list = []
 
     max_turn_prey  = float(theta_dot_max * dt) + 1e-12
     max_turn_shark = float(theta_dot_max_shark * dt) + 1e-12
@@ -271,14 +272,16 @@ def run_couzin_simulation(
 
         prey_theta_new = np.array([np.arctan2(a.vel[1], a.vel[0]) for a in swarm], dtype=np.float32)
         dtheta_prey = wrap_to_pi(prey_theta_new - prey_theta_prev)
-
-        prey_actions = np.clip(dtheta_prey / (2.0 * max_turn_prey) + 0.5, 0.0, 1.0).astype(np.float32)
+        
+        prey_actions = (dtheta_prey / (2.0 * max_turn_prey)) + 0.5
+        prey_actions = np.clip(prey_actions, 0.0, 1.0).astype(np.float32)
         
         if number_of_sharks > 0:
             shark_theta_new = np.array([np.arctan2(s.vel[1], s.vel[0]) for s in sharks], dtype=np.float32)
             dtheta_shark = wrap_to_pi(shark_theta_new - shark_theta_prev)
 
-            shark_actions = np.clip(dtheta_shark / (2.0 * max_turn_shark) + 0.5, 0.0, 1.0).astype(np.float32)
+            shark_actions = (dtheta_shark / (2.0 * max_turn_shark)) + 0.5
+            shark_actions = np.clip(shark_actions, 0.0, 1.0)
         else:
             shark_actions = None
 
@@ -291,6 +294,7 @@ def run_couzin_simulation(
         pred_tensor_list.append(pred_tensor)
         prey_tensor_list.append(prey_tensor)
         metrics_list.append(metrics)
+        action_list.append({"prey": prey_actions, "pred": shark_actions})
 
         # --- Walls & movement ---
         for agent in swarm:
@@ -324,15 +328,21 @@ def run_couzin_simulation(
         combined = np.concatenate([predator_log[:t], prey_log[:t]], axis=1).astype(np.float32)
         xs = combined[..., 0].astype(np.float32)
         ys = combined[..., 1].astype(np.float32)
+        dirx = combined[..., 4].astype(np.float32)
+        diry = combined[..., 5].astype(np.float32)
     else:
         xs = prey_log[..., 0].astype(np.float32)
         ys = prey_log[..., 1].astype(np.float32)
+        dirx = prey_log[:t, ..., 4].astype(np.float32)
+        diry = prey_log[:t, ..., 5].astype(np.float32)
 
-    init_pool = np.stack([xs, ys], axis=-1).astype(np.float32)
+    theta = np.arctan2(diry, dirx).astype(np.float32)
+
+    init_pool = np.stack([xs, ys, theta], axis=-1).astype(np.float32)
     init_pool = init_pool[50:] # cut 50 off due to random init
     init_pool = torch.from_numpy(init_pool).to(torch.float32)
 
-    return final_pred_tensor, final_prey_tensor, metrics_list, init_pool
+    return final_pred_tensor, final_prey_tensor, metrics_list, action_list, init_pool
 
 
 

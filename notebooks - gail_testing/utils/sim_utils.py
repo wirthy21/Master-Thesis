@@ -18,6 +18,7 @@ from utils.eval_utils import compute_polarization, compute_angular_momentum, deg
 class Agent:
     def __init__(self, agent_id, speed, area_width, area_height):
         self.id = agent_id
+        self.speed = float(speed)
         self.pos = np.array([np.random.uniform(0, area_width),
                              np.random.uniform(0, area_height)], dtype=np.float64)
 
@@ -30,7 +31,7 @@ class Agent:
 
 def apply_turnrate_on_theta(agent, action, speed, max_turn):
     dtheta = (action - 0.5) * 2.0 * max_turn
-    agent.theta = agent.theta + dtheta
+    agent.theta = (agent.theta + dtheta + np.pi) % (2*np.pi) - np.pi
     agent.vel = np.array([np.cos(agent.theta), np.sin(agent.theta)]) * speed
 
 
@@ -122,6 +123,7 @@ def get_state_tensors(prey_log_step, pred_log_step, n_pred=1,
         "dy": dy,
         "vxs": vxs,
         "vys": vys,
+        "theta": np.arctan2(dir_y, dir_x),
         "features": features,
     }
 
@@ -129,28 +131,41 @@ def get_state_tensors(prey_log_step, pred_log_step, n_pred=1,
     return pred_tensor, prey_tensor, metrics
 
 
-def apply_init_pool(init_pool, pred, prey, area_width=50, area_height=50):
-    steps, agents, coordinates = init_pool.shape
-    agents = len(pred) + len(prey)
+def apply_init_pool(init_pool, pred, prey, area_width=50, area_height=50, experiment=False):
+    n_pred = len(pred)
+    n_prey = len(prey)
 
-    if not torch.is_tensor(init_pool):
-        init_pool = torch.as_tensor(init_pool, dtype=torch.float32)
+    if experiment is False:
+        steps, agents, coordinates = init_pool.shape
+        sample = init_pool[torch.randint(steps, (1,)).item(), :agents].clone()
 
-    positions = init_pool[torch.randint(steps, (1,)).item(), :agents].clone()  # [agents, 2]
+        positions = sample[:, :2]
+        thetas = sample[:, 2]
 
-    center_env = positions.new_tensor([area_width * 0.5, area_height * 0.5])
-    center_pos = positions.mean(dim=0)
-    shift = center_env - center_pos
-    positions = positions + shift
+        center_env = positions.new_tensor([area_width * 0.5, area_height * 0.5])
+        center_pos = positions.mean(dim=0)
+        positions = positions + (center_env - center_pos)
+
+    else:
+        agents, coordinates = init_pool.shape
+        positions = init_pool[:, :2] * area_height
+        thetas = init_pool[:, 2]
 
     # predators
-    for i in range(len(pred)):
-        pred[i].pos = positions[i].detach().cpu().numpy().astype(np.float64)
+    for i in range(n_pred):
+        agent = pred[i]
+        agent.pos = positions[i].detach().cpu().numpy().astype(np.float64)
+        agent.theta = float(thetas[i].item())
+        agent.vel = np.array([np.cos(agent.theta), np.sin(agent.theta)], dtype=np.float64) * agent.speed
 
     # prey
-    for i in range(len(prey)):
-        j = len(pred) + i
-        prey[i].pos = positions[j].detach().cpu().numpy().astype(np.float64)
+    for i in range(n_prey):
+        j = n_pred + i
+        agent = prey[i]
+        agent.pos = positions[j].detach().cpu().numpy().astype(np.float64)
+        agent.theta = float(thetas[j].item())
+        agent.vel = np.array([np.cos(agent.theta), np.sin(agent.theta)], dtype=np.float64) * agent.speed
+
 
 
 def run_env_simulation(prey_policy=None, pred_policy=None, 
@@ -159,20 +174,23 @@ def run_env_simulation(prey_policy=None, pred_policy=None,
                        prey_speed=5, pred_speed=5, 
                        area_width=50, area_height=50, 
                        max_turn=np.pi,
-                       visualization='off', init_pool=None):
+                       visualization='off', init_pool=None, experiment=False):
 
     if seed is not None:
         np.random.seed(seed) # agent init
         torch.manual_seed(seed) # CPU
 
-    prey_policy = deepcopy(prey_policy)
-    pred_policy = deepcopy(pred_policy) if pred_policy is not None else None
+    prey_policy = deepcopy(prey_policy).to('cpu')
+    pred_policy = deepcopy(pred_policy).to('cpu') if pred_policy is not None else None
 
     prey = [Agent(i, prey_speed, area_width, area_height) for i in range(n_prey)]
     pred = [Agent(i, pred_speed, area_width, area_height) for i in range(n_pred)]
 
-    if init_pool is not None:
+    if init_pool is not None and experiment is False:
         apply_init_pool(init_pool, pred, prey, area_width=area_width, area_height=area_height)
+    
+    if init_pool is not None and experiment is True:
+        apply_init_pool(init_pool, pred, prey, area_width=area_width, area_height=area_height, experiment=True)
 
     n_agents = n_prey + n_pred
     neigh = n_agents - 1

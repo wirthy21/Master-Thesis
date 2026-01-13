@@ -94,17 +94,18 @@ Runs env with single policy for prey and predator each, vectorized.
 def init_positions_in_env(init_pool, area_width=50, area_height=50, device="cuda"):
     steps, agents, coordinates = init_pool.shape
 
-    idx = torch.randint(steps, (), device=device)            # scalar
-    positions = init_pool[idx, :agents].clone().to(device)   # (N,2)
+    idx = torch.randint(steps, (), device=device)
+    sample = init_pool[idx].to(device)
+
+    positions = sample[:, :2].clone()
+    theta = sample[:, 2].clone()
 
     center_env = torch.tensor([area_width * 0.5, area_height * 0.5],
-                              dtype=positions.dtype, device=device).view(1, 2)  # (1,2)
+                              dtype=positions.dtype, device=device).view(1, 2)
+    center_pos = positions.mean(dim=0, keepdim=True)
+    positions = positions + (center_env - center_pos)
 
-    center_pos = positions.mean(dim=0, keepdim=True)  # (1,2)
-    shift = center_env - center_pos                   # (1,2)
-    positions = positions + shift
-
-    return positions.to(torch.float32)
+    return positions.to(torch.float32), theta.to(torch.float32)
 
 
 def run_env_vectorized(prey_policy=None, pred_policy=None, 
@@ -118,8 +119,7 @@ def run_env_vectorized(prey_policy=None, pred_policy=None,
     n_agents = n_prey + n_pred
     n_neigh = n_agents - 1
 
-    positions = init_positions_in_env(init_pool, area_width=area_width, area_height=area_height, device=device)
-    theta = (torch.rand((n_agents,), dtype=torch.float32, device=device) * 2 * torch.pi) - torch.pi
+    positions, theta = init_positions_in_env(init_pool, area_width=area_width, area_height=area_height, device=device)
     speed = torch.full((n_agents,), float(prey_speed), dtype=torch.float32, device=device)
     if n_pred > 0:
         speed[:n_pred] = float(pred_speed)
@@ -201,25 +201,25 @@ Runs env with pertubated policy for prey and predator each, vectorized.
 '''
 
 
-def init_positions(init_pool, batch=32, area_width=50, area_height=50,
-                   mode="dual", device="cuda"):
+def init_positions(init_pool, batch=32, area_width=50, area_height=50, mode="dual", device="cuda"):
     steps, agents, coordinates = init_pool.shape
 
-    idx = torch.randint(steps, (batch,), device=device)  # (B,)
+    idx = torch.randint(steps, (batch,), device=device)
 
-    positions = init_pool[idx, :agents].clone().to(device)  # (B,N,2)
+    sample = init_pool[idx].to(device)
+    positions = sample[:, :, :2].clone()
+    theta = sample[:, :, 2].clone()
 
     center_env = torch.tensor([area_width * 0.5, area_height * 0.5],
                               dtype=positions.dtype, device=device).view(1, 1, 2)
-
-    center_pos = positions.mean(dim=1, keepdim=True)  # (B,1,2)
-    shift = center_env - center_pos
-    positions = positions + shift
+    center_pos = positions.mean(dim=1, keepdim=True)
+    positions = positions + (center_env - center_pos)
 
     if mode == "dual":
-        positions = positions.repeat(2, 1, 1)  # (2B, N, 2)
+        positions = positions.repeat(2, 1, 1) 
+        theta = theta.repeat(2, 1)  
 
-    return positions.to(torch.float32)
+    return (positions.to(torch.float32), theta.to(torch.float32))
 
 def policy_perturbation(pred_policy, prey_policy, 
                         role="prey", module="pairwise", 
@@ -286,8 +286,8 @@ def run_batch_env(prey_policy=None, pred_policy=None,
     n_agents = n_prey + n_pred
     n_neigh = n_agents - 1
 
-    positions = init_pos.to(device)
-    theta = (torch.rand((batch, n_agents), dtype=torch.float32, device=device) * 2 * torch.pi) - torch.pi
+    positions = init_pos[0].to(device)
+    theta = init_pos[1].to(device)
     speed = torch.full((batch, n_agents), float(prey_speed), dtype=torch.float32, device=device)
 
     if n_pred > 0:
