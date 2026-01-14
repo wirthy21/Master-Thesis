@@ -206,6 +206,7 @@ def run_env_simulation(prey_policy=None, pred_policy=None,
 
     mask = ~np.eye(n_agents, dtype=bool)
     metrics_list = []
+    weights_list = []
     t = 0
 
     while t < max_steps:
@@ -269,19 +270,30 @@ def run_env_simulation(prey_policy=None, pred_policy=None,
 
         if n_pred > 0:
             with torch.inference_mode():
-                pred_actions = pred_policy.forward(pred_states, deterministic=deterministic)
+                pred_actions, pred_weights = pred_policy.forward(pred_states, deterministic=deterministic)
                 pred_traj[t, :, :, :4] = pred_states
                 pred_traj[t, :, :, 4:] = pred_actions.unsqueeze(1).expand(-1, neigh, -1)
 
             with torch.inference_mode():
-                prey_actions = prey_policy.forward(prey_states, deterministic=deterministic)
+                prey_actions, prey_weights = prey_policy.forward(prey_states, deterministic=deterministic)
                 prey_traj[t, :, :, :5] = prey_states
                 prey_traj[t, :, :, 5:] = prey_actions.unsqueeze(1).expand(-1, neigh, -1)
+
+            weights = (pred_weights.detach().cpu().numpy(), prey_weights.detach().cpu().numpy())
+            weights_idx = {"pred": {"self": 0, "neighbors": [idx for idx in range(n_agents) if idx != 0]},
+                           "prey": {"self": list(range(n_pred, n_agents)), "neighbors": [[idx for idx in range(n_agents) if idx != i] for i in list(range(n_pred, n_agents))]}}
+
         else:
             with torch.inference_mode():
-                prey_actions = prey_policy.forward(prey_states, deterministic=deterministic)
+                prey_actions, prey_weights = prey_policy.forward(prey_states, deterministic=deterministic)
                 prey_traj[t, :, :, :4] = prey_states
                 prey_traj[t, :, :, 4:] = prey_actions.unsqueeze(1).expand(-1, neigh, -1)
+            
+            weights = (None, prey_weights.detach().cpu().numpy())
+            weights_idx = {"pred": None,
+                           "prey": {"self": list(range(n_pred, n_agents)), "neighbors": [[idx for idx in range(n_agents) if idx != i] for i in list(range(n_pred, n_agents))]}}
+
+        weights_list.append({"weights": weights, "weights_idx": weights_idx})
 
         prey_actions = prey_actions.squeeze(-1).detach().cpu().numpy()
         for i, agent in enumerate(prey):
@@ -308,4 +320,4 @@ def run_env_simulation(prey_policy=None, pred_policy=None,
         prey_tensor = prey_traj[:t]
         pred_tensor = pred_traj[:t] if n_pred > 0 else None
 
-    return pred_tensor, prey_tensor, metrics_list
+    return pred_tensor, prey_tensor, (metrics_list, weights_list)

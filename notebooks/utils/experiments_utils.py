@@ -4,7 +4,6 @@ import torch
 import keyboard
 import numpy as np
 import pandas as pd
-from utils.env_utils import *
 from utils.train_utils import *
 import matplotlib.pyplot as plt
 from scipy.spatial import cKDTree

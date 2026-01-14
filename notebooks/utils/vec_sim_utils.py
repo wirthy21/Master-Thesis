@@ -164,8 +164,8 @@ def run_env_vectorized(prey_policy=None, pred_policy=None,
             prey_states = prey_states[0]
             
             if n_pred > 0:
-                pred_actions = pred_policy.forward(pred_states, deterministic=deterministic)  # (n_pred,1)
-                prey_actions = prey_policy.forward(prey_states, deterministic=deterministic)  # (n_prey,1)
+                pred_actions, pred_weights = pred_policy.forward(pred_states, deterministic=deterministic)  # (n_pred,1)
+                prey_actions, prey_weights = prey_policy.forward(prey_states, deterministic=deterministic)  # (n_prey,1)
 
                 pred_traj[t, :, :, :4] = pred_states
                 pred_traj[t, :, :, 4:] = pred_actions.unsqueeze(1).expand(-1, n_neigh, -1)
@@ -174,7 +174,7 @@ def run_env_vectorized(prey_policy=None, pred_policy=None,
                 prey_traj[t, :, :, 5:] = prey_actions.unsqueeze(1).expand(-1, n_neigh, -1)
             else:
                 prey_in = prey_states                        # (n_prey, n_neigh, 4)
-                prey_actions = prey_policy.forward(prey_in, deterministic=deterministic)  # (n_prey,1)
+                prey_actions, prey_weights = prey_policy.forward(prey_in, deterministic=deterministic)  # (n_prey,1)
 
                 prey_traj[t, :, :, :4] = prey_states
                 prey_traj[t, :, :, 4:] = prey_actions.unsqueeze(1).expand(-1, n_neigh, -1)
@@ -337,7 +337,7 @@ def run_batch_env(prey_policy=None, pred_policy=None,
                                                           deterministic=deterministic).view(batch, n_pred, 1)
                 else:
                     #print("No perturbation on predator policy.")
-                    pred_actions = pred_policy.forward(
+                    pred_actions, pred_weights = pred_policy.forward(
                         pred_in_env.view(batch * n_pred, n_neigh, 4),
                         deterministic=deterministic
                     ).view(batch, n_pred, 1)
@@ -348,7 +348,7 @@ def run_batch_env(prey_policy=None, pred_policy=None,
                                                           deterministic=deterministic).view(batch, n_prey, 1)
                 else:
                     #print("No perturbation on prey policy.")
-                    prey_actions = prey_policy.forward(
+                    prey_actions, prey_weights = prey_policy.forward(
                         prey_in_env.view(batch * n_prey, n_neigh, 5),
                         deterministic=deterministic
                     ).view(batch, n_prey, 1)

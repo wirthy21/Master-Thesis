@@ -1,51 +1,90 @@
 import torch
 import torch.nn as nn
-from utils.es_utils import *
-from utils.train_utils import *
+import torch.nn.functional as F
+from utils.encoder_utils import *
+from utils.train_utils import compute_wasserstein_loss, gradient_penalty
 
-# pref ref: https://github.com/Bigpig4396/PyTorch-Generative-Adversarial-Imitation-Learning-GAIL/blob/master/GAIL_OppositeV4.py
-# ref: https://github.com/deligentfool/GAIL_pytorch/blob/master/net.py
-# ref: https://github.com/jatinarora2702/gail-pytorch/blob/master/gail/main.py
+"""
+References:
+Wu et al. (2025) - Adversarial imitation learning with deep attention network for swarm systems (https://doi.org/10.1007/s40747-024-01662-2)
+Wu et al. (2025) - CBIL: Collective Behavior Imitation Learning for Fish from Real Videos (https://doi.org/10.48550/arXiv.2504.00234)
+"""
 
-# Always in Fisch and all neighbors
-# Input Layer: neigh * features = 5
-# Output Layer: Binary Classification = 1
-# Hidden layers: like majoritiy of references
 
 class Discriminator(nn.Module):
-    def __init__(self, neigh=32, features=5):
+    """
+    Input: sampled window of state-action pairs from either expert or policy trajectories
+    Output: Wasserstein score matrix [batch, frames-1, agents]
+    """
+    def __init__(self, encoder, role, z_dim=32):
         super(Discriminator, self).__init__()
-        input_dim = neigh * features
-        self.fc1 = nn.Linear(input_dim, 64)
-        self.fc2 = nn.Linear(64, 32)
-        self.fc3 = nn.Linear(32, 1)
+        self.encoder = encoder
+        self.role = role
+        self.z_dim = z_dim
+        self.input_dim = 2 * z_dim
+
+        self.fc1 = nn.Linear(self.input_dim, 128)
+        self.fc2 = nn.Linear(128, 64)
+        self.fc3 = nn.Linear(64, 32)
+        self.fc4 = nn.Linear(32, 1)
+
+    def encoder_forward(self, tensor):
+        states = tensor[..., :-1]
+        _, trans = self.encoder(states)
+        batch, frames_minus_one, agent, neigh_rep = trans.shape
+        feats = trans.reshape(batch * frames_minus_one * agent, neigh_rep)
+        return feats, (batch, frames_minus_one, agent)
 
     def forward(self, tensor):
-        batch_size, neigh, features = tensor.shape
-        x = tensor.view(batch_size, neigh * features) # Flatten the input
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
-        x = self.fc3(x)
-        return x.view(batch_size) # f(s,a): Wasserstein-Critic-Score (higher = closer to Expert)
+        features, shape = self.encoder_forward(tensor)
+        batch, frames_minus_one, agent = shape
 
-    def update(self, expert_batch, policy_batch, optim_dis, lambda_gp):
-        expert_batch = expert_batch.detach()
-        policy_batch = policy_batch.detach()
-        
+        params = torch.relu(self.fc1(features))
+        params = torch.relu(self.fc2(params))
+        params = torch.relu(self.fc3(params))
+        params = self.fc4(params).squeeze(-1)
+
+        matrix = params.view(batch, frames_minus_one, agent)
+        return matrix
+
+    def update(self, expert_batch, policy_batch, optim_dis, lambda_gp,
+               noise=0, generation=None, num_generations=None):
+
+        if noise > 0.0:
+            noise_until = 0.5 * num_generations
+            decay = 1.0 - (generation / noise_until)
+            decay = max(0.0, decay)
+            noise_term = noise * decay
+
+            expert_batch = expert_batch.clone()
+            policy_batch = policy_batch.clone()
+
+            # noise only on states
+            expert_batch[..., :-1] += torch.randn_like(expert_batch[..., :-1]) * noise_term
+            policy_batch[..., :-1] += torch.randn_like(policy_batch[..., :-1]) * noise_term
+
         exp_scores = self.forward(expert_batch)
         gen_scores = self.forward(policy_batch)
+
         grad_penalty = gradient_penalty(self, expert_batch, policy_batch)
 
-        wasserstein_loss = compute_wasserstein_loss(exp_scores, gen_scores, lambda_gp, grad_penalty)
-        
+        loss, loss_gp = compute_wasserstein_loss(exp_scores, gen_scores, lambda_gp, grad_penalty)
+
         optim_dis.zero_grad()
-        wasserstein_loss.backward()
+        loss_gp.backward()
         optim_dis.step()
 
-        return (wasserstein_loss.item(), grad_penalty.item(), exp_scores.mean().item(), gen_scores.mean().item())
-    
-    # ref: https://discuss.pytorch.org/t/reinitializing-the-weights-after-each-cross-validation-fold/11034
-    def set_parameters(self, init=False):
+        return {
+            "dis_loss": round(loss.item(), 4),
+            "dis_loss_gp": round(loss_gp.item(), 4),
+            "grad_penalty": round(grad_penalty.item(), 4),
+            "expert_score_mean": round(exp_scores.mean().item(), 4),
+            "policy_score_mean": round(gen_scores.mean().item(), 4),
+        }
+
+# https://stackoverflow.com/questions/63627997/reset-parameters-of-a-neural-network-in-pytorch
+    def set_parameters(self, init=True):
+        # Initialize all parameters
         if init is True:
             for layer in self.modules():
                 if hasattr(layer, 'reset_parameters'):

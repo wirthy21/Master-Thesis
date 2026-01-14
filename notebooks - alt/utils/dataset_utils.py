@@ -76,84 +76,41 @@ def filter_frames(total_frames):
     return best_pred_prey_frames, max_speed
 
 
-def find_valid_windows(filtered_frames, window_len=10, total_detections=33):
-    # track ids pro frame
-    ids_by_frame = defaultdict(set)
+def find_valid_windows(filtered_frames, num_frames=9, total_detections=33):
+    det_by_frame = defaultdict(list)
     for d in filtered_frames:
-        ids_by_frame[int(d["frame"])].add(int(d["track_id"]))
-
-    frames = sorted(ids_by_frame.keys())
+        det_by_frame[d['frame']].append(d['track_id'])
     
-    if not frames:
-        return []
-
-    episodes = []
-    i = 0
-
-    while i < len(frames):
-        frame = frames[i]
-        inital_ids = ids_by_frame[frame]
-
-        if len(inital_ids) != total_detections:
-            i += 1
-            continue
-
-        start = frame
-        end = frame
-
-        while i + 1 < len(frames):
-            f_next = frames[i + 1]
-            if f_next != end + 1:
-                break
-            if ids_by_frame[f_next] != inital_ids:
-                break
-            i += 1
-            end = f_next
-
-        length = end - start + 1
+    all_frames = sorted(det_by_frame.keys())
+    
+    valid_windows =[]
+    for start in range(all_frames[0], all_frames[-1] - num_frames + 1):
+        track_ids = set(det_by_frame.get(start, [])) #get track_ids for the start frame
         
-        if length >= window_len:
-            episodes.append({
-                "start_frame": start,
-                "end_frame": end,
-                "length": length,
-                "ids": sorted(inital_ids)
-            })
+        # update track_ids for the next num_frames
+        for f in range(start + 1, start + num_frames):
+            frame_ids = set(det_by_frame.get(f, []))
+            track_ids &= frame_ids
+            if not track_ids:
+                break #if no track_ids left, break early
+        
+        if len(list(track_ids)) == total_detections:
+            valid_windows.append({"start_frame": start, "ids": list(track_ids)}) #save start frame of the valid window
+    
+    full_track_windows = []
+    for window in valid_windows:
+        start = window['start_frame']
+        ids = set(window['ids'])
+        frames = set(range(start, start + num_frames))
 
-        i += 1
-
-    return episodes
-
-
-def extract_windows(episodes, window_len=5):
-    windows = []
-
-    for episode in episodes:
-        clip_len = episode["length"]
-        if clip_len < window_len:
-            continue
-
-        clip_start = episode["start_frame"]
-        ids = episode["ids"]
-
-        num_windows = clip_len - window_len + 1
-        for offset in range(num_windows):
-            window_start = clip_start + offset
-            window_end = window_start + window_len - 1
-
-            windows.append({
-                "start_frame": window_start,
-                "end_frame": window_end,
-                "length": window_len,
-                "ids": ids
-            })
-
-    return windows
-
+        window_data = [data for data in filtered_frames if data['frame'] in frames and data['track_id'] in ids]
+        full_track_windows.append(window_data)
+        
+    return full_track_windows, valid_windows
 
 
 def get_expert_features(frame, width, height, max_speed=15):    
-    frame = sorted(frame, key=lambda det: (det['label'] != '1', int(det['track_id']))) # sort so that Pred Head is always first
+    frame = sorted(frame, key=lambda det: det['label'] != '1') # sort so that Pred Head is always first
 
     vscale = np.vectorize(scale)
 
@@ -196,47 +153,59 @@ def get_expert_features(frame, width, height, max_speed=15):
     pred_tensor = torch.from_numpy(neigh[0]).unsqueeze(0)
     prey_tensor = torch.from_numpy(neigh[1:]) # shape (N-1, N-1, 5)
 
-    return pred_tensor, prey_tensor, scaled_xs.tolist(), scaled_ys.tolist(), thetas.tolist()
+    return pred_tensor, prey_tensor, scaled_xs, scaled_ys, vxs, vys
 
 
-def get_expert_tensors(filtered_frames, extracted_windows, width, height, max_speed=15, window_size=5):
-    if len(extracted_windows) == 0:
-        return torch.empty(0), torch.empty(0)
+def get_expert_tensors(full_track_windows, valid_windows, width, height, max_speed=15, window_size=1):
+    if len(valid_windows) == 0:
+        empty_metrics = {"xs": [], "ys": [], "vxs": [], "vys": []}
+        return torch.empty(0), torch.empty(0), empty_metrics
     
-    dets_by_frame = defaultdict(list)
-    for det in filtered_frames:
-        dets_by_frame[int(det["frame"])].append(det)
-    
-    start_frames = [window['start_frame'] for window in extracted_windows]
+    start_frames = [vw['start_frame'] for vw in valid_windows]
     pred_windows = []
     prey_windows = []
-    window_coordinates = []
+    expert_metrics = {"xs": [], "ys": [], "vxs": [], "vys": []}
 
     for idx, start in enumerate(start_frames):
         window_detections = []
         for frame in range(start, start + window_size):
-            dets = dets_by_frame[int(frame)]
+            dets = [det for det in full_track_windows[idx] if det['frame'] == frame]
             window_detections.append(dets)
 
         preds = []
         preys = []
-        frame_coordinates = []
+
+        xs_all = []
+        ys_all = []
+        vxs_all = []
+        vys_all = []
 
         for dets in window_detections:
-            pred_tensor, prey_tensor, xs, ys, thetas = get_expert_features(dets, width, height, max_speed)
+            pred_tensor, prey_tensor, xs_frame, ys_frame, vxs_frame, vys_frame = get_expert_features(dets, width, height, max_speed)
 
             preds.append(pred_tensor)
             preys.append(prey_tensor)
-            
-            xy = torch.from_numpy(np.stack([xs, ys, thetas], axis=-1)).float()
-            frame_coordinates.append(xy)
+
+            xs_all.extend(xs_frame)
+            ys_all.extend(ys_frame)
+            vxs_all.extend(vxs_frame)
+            vys_all.extend(vys_frame)
 
         pred_windows.append(torch.stack(preds, dim=0))
         prey_windows.append(torch.stack(preys, dim=0))
-        window_coordinates.append(torch.stack(frame_coordinates, dim=0))
+
+        expert_metrics["xs"].extend(xs_all)
+        expert_metrics["ys"].extend(ys_all)
+        expert_metrics["vxs"].extend(vxs_all)
+        expert_metrics["vys"].extend(vys_all)
 
     pred_tensor = torch.stack(pred_windows, dim=0)
     prey_tensor = torch.stack(prey_windows, dim=0)
-    coordinates = torch.stack(window_coordinates, dim=0)
 
-    return pred_tensor, prey_tensor, coordinates
+    total, n_clips, agent, neigh, feat = pred_tensor.shape
+    pred_tensors = pred_tensor.reshape(total * n_clips, agent, neigh, feat)
+
+    total, n_clips, agent, neigh, feat = prey_tensor.shape
+    prey_tensors = prey_tensor.reshape(total * n_clips, agent, neigh, feat)
+
+    return pred_tensors, prey_tensors, expert_metrics
