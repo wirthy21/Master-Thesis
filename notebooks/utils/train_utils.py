@@ -51,46 +51,23 @@ def gradient_estimate(theta, rewards_norm, epsilons, sigma, lr, num_perturbation
 
 
 def discriminator_reward(discriminator, gen_tensor, mode="mean"):
-    matrix = discriminator(gen_tensor)  # expected: (B, F-1, A) or (B, F-1, A, ...)
+    matrix = discriminator(gen_tensor)
 
     if mode == "mean":
-        reduce_dims = tuple(range(1, matrix.ndim))
-        scores = matrix.mean(dim=reduce_dims)  # (B,)
-        return scores
-
-    if mode == "top":
-        k = 0.2
-        flat = matrix.flatten(1)  # (B, *)
-        K = max(1, int(flat.size(1) * k))
-        topk_vals = flat.topk(K, dim=1).values  # (B, K)
-        return topk_vals.mean(dim=1)            # (B,)
+        return matrix.mean(dim=(1, 2))
 
     if mode == "avoid":
-        d0 = 0.08
-        temp = 0.02
+        dis_reward = matrix.mean(dim=(1, 2))
 
-        dx = gen_tensor[:, :-1, :, :, 0]
-        dy = gen_tensor[:, :-1, :, :, 1]
-        dist = torch.sqrt(dx * dx + dy * dy + 1e-8)  # (B, F-1, A, N)
+        dx = gen_tensor[:, :-1, :, :, 1]
+        dy = gen_tensor[:, :-1, :, :, 2]
+        dist = torch.sqrt(dx**2 + dy**2)
 
-        if discriminator.role == "prey":
-            pred_dist = dist[:, :, :, 0]            # (B, F-1, A)
-        else:
-            pred_dist = dist[:, :, :, 1:].amin(-1)  # (B, F-1, A)
+        pred_dist = dist[:, :, :, 0]
 
-        weight = torch.sigmoid((d0 - pred_dist) / temp) + 0.05  # (B, F-1, A)
+        avoid_reward = (1.0 - torch.exp(-pred_dist / 0.05)).mean(dim=(1, 2))
 
-        # bring matrix to (B, F-1, A) if it has extra dims
-        if matrix.ndim > 3:
-            matrix_reduced = matrix.mean(dim=tuple(range(3, matrix.ndim)))  # (B, F-1, A)
-        else:
-            matrix_reduced = matrix
-
-        # weighted mean per batch: sum over (F-1,A), keep batch
-        num = (matrix_reduced * weight).sum(dim=(1, 2))  # (B,)
-        den = weight.sum(dim=(1, 2)).clamp_min(1e-12)    # (B,)
-        return num / den                                 # (B,)
-
+        return dis_reward + avoid_reward * 0.05
 
 
 def optimize_es(role, module, mode,

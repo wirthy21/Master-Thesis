@@ -332,26 +332,18 @@ def run_batch_env(prey_policy=None, pred_policy=None,
                 prey_in_env = prey_states.view(batch, n_prey, n_neigh, 5)  # (B, n_prey, neigh, 5)
 
                 # PRED actions
-                if role in ("pred", "predator") and pert_list is not None:
-                    pred_actions = batch_policy_forward(pred_policy, pred_in_env, pert_list,
-                                                          deterministic=deterministic).view(batch, n_pred, 1)
+                if role == "pred":
+                    pred_actions, pred_weights = batch_policy_forward(pred_policy, pred_in_env, pert_list, deterministic=deterministic)
                 else:
-                    #print("No perturbation on predator policy.")
-                    pred_actions, pred_weights = pred_policy.forward(
-                        pred_in_env.view(batch * n_pred, n_neigh, 4),
-                        deterministic=deterministic
-                    ).view(batch, n_pred, 1)
+                    pred_actions, pred_weights = pred_policy.forward(pred_in_env.view(batch * n_pred, n_neigh, 4), deterministic=deterministic)
+                    pred_actions = pred_actions.view(batch, n_pred, 1)
 
                 # PREY actions
-                if role == "prey" and pert_list is not None:
-                    prey_actions = batch_policy_forward(prey_policy, prey_in_env, pert_list,
-                                                          deterministic=deterministic).view(batch, n_prey, 1)
+                if role == "prey":
+                    prey_actions, prey_weights = batch_policy_forward(prey_policy, prey_in_env, pert_list, deterministic=deterministic)
                 else:
-                    #print("No perturbation on prey policy.")
-                    prey_actions, prey_weights = prey_policy.forward(
-                        prey_in_env.view(batch * n_prey, n_neigh, 5),
-                        deterministic=deterministic
-                    ).view(batch, n_prey, 1)
+                    prey_actions, prey_weights = prey_policy.forward(prey_in_env.view(batch * n_prey, n_neigh, 5), deterministic=deterministic)
+                    prey_actions = prey_actions.view(batch, n_prey, 1)
 
                 pred_traj[:, t, :, :, :4] = pred_states
                 pred_traj[:, t, :, :, 4:] = pred_actions.unsqueeze(3).expand(-1, -1, n_neigh, -1)
@@ -363,13 +355,9 @@ def run_batch_env(prey_policy=None, pred_policy=None,
                 prey_in_env = prey_states.view(batch, n_prey, n_neigh, 4)
 
                 if role == "prey" and pert_list is not None:
-                    prey_actions = batch_policy_forward(prey_policy, prey_in_env, pert_list,
-                                                          deterministic=deterministic).view(batch, n_prey, 1)
+                    prey_actions = batch_policy_forward(prey_policy, prey_in_env, pert_list, deterministic=deterministic)
                 else:
-                    prey_actions = prey_policy.forward(
-                        prey_in_env.view(batch * n_prey, n_neigh, 4),
-                        deterministic=deterministic
-                    ).view(batch, n_prey, 1)
+                    prey_actions = prey_policy.forward(prey_in_env.view(batch * n_prey, n_neigh, 4), deterministic=deterministic).view(batch, n_prey, 1)
 
                 prey_traj[:, t, :, :, :4] = prey_states
                 prey_traj[:, t, :, :, 4:] = prey_actions.unsqueeze(3).expand(-1, -1, n_neigh, -1)
