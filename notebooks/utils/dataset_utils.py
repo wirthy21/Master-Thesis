@@ -152,7 +152,7 @@ def extract_windows(episodes, window_len=5):
 
 
 
-def get_expert_features(frame, width, height, max_speed=15):    
+def get_expert_features(frame, width, height, max_speed=10):    
     frame = sorted(frame, key=lambda det: (det['label'] != '1', int(det['track_id']))) # sort so that Pred Head is always first
 
     vscale = np.vectorize(scale)
@@ -170,7 +170,7 @@ def get_expert_features(frame, width, height, max_speed=15):
     vys = np.array([det['vy'] for det in frame]) # Range [-9.267164570677894 : 11.038460817819471]
 
     thetas = np.array([det['angle'] for det in frame])
-    scaled_thetas = vscale(thetas, -np.pi, np.pi, -1, 1)
+    scaled_thetas = vscale(thetas, -np.pi, np.pi, 0, 1)
 
     cos_t = np.cos(thetas)                        
     sin_t = np.sin(thetas)
@@ -199,7 +199,7 @@ def get_expert_features(frame, width, height, max_speed=15):
     return pred_tensor, prey_tensor, scaled_xs.tolist(), scaled_ys.tolist(), thetas.tolist()
 
 
-def get_expert_tensors(filtered_frames, extracted_windows, width, height, max_speed=15, window_size=5):
+def get_expert_tensors(filtered_frames, extracted_windows, width, height, max_speed=10, window_size=5):
     if len(extracted_windows) == 0:
         return torch.empty(0), torch.empty(0)
     

@@ -67,7 +67,12 @@ def discriminator_reward(discriminator, gen_tensor, mode="mean"):
 
         avoid_reward = (1.0 - torch.exp(-pred_dist / 0.05)).mean(dim=(1, 2))
 
-        return dis_reward + avoid_reward * 0.05
+        dis_scale   = dis_reward.detach().abs().mean()   
+        avoid_scale = avoid_reward.detach().mean().clamp(min=1e-8)
+
+        alpha = 0.2 * dis_scale / avoid_scale
+
+        return dis_reward + alpha * avoid_reward
 
 
 def optimize_es(role, module, mode,

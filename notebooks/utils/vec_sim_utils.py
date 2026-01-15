@@ -210,8 +210,7 @@ def init_positions(init_pool, batch=32, area_width=50, area_height=50, mode="dua
     positions = sample[:, :, :2].clone()
     theta = sample[:, :, 2].clone()
 
-    center_env = torch.tensor([area_width * 0.5, area_height * 0.5],
-                              dtype=positions.dtype, device=device).view(1, 1, 2)
+    center_env = torch.tensor([area_width * 0.5, area_height * 0.5], dtype=positions.dtype, device=device).view(1, 1, 2)
     center_pos = positions.mean(dim=1, keepdim=True)
     positions = positions + (center_env - center_pos)
 
@@ -219,7 +218,7 @@ def init_positions(init_pool, batch=32, area_width=50, area_height=50, mode="dua
         positions = positions.repeat(2, 1, 1) 
         theta = theta.repeat(2, 1)  
 
-    return (positions.to(torch.float32), theta.to(torch.float32))
+    return (positions, theta)
 
 def policy_perturbation(pred_policy, prey_policy, 
                         role="prey", module="pairwise", 
@@ -355,9 +354,10 @@ def run_batch_env(prey_policy=None, pred_policy=None,
                 prey_in_env = prey_states.view(batch, n_prey, n_neigh, 4)
 
                 if role == "prey" and pert_list is not None:
-                    prey_actions = batch_policy_forward(prey_policy, prey_in_env, pert_list, deterministic=deterministic)
+                    prey_actions, prey_weights = batch_policy_forward(prey_policy, prey_in_env, pert_list, deterministic=deterministic)
                 else:
-                    prey_actions = prey_policy.forward(prey_in_env.view(batch * n_prey, n_neigh, 4), deterministic=deterministic).view(batch, n_prey, 1)
+                    prey_actions, prey_weights = prey_policy.forward(prey_in_env.view(batch * n_prey, n_neigh, 4), deterministic=deterministic)
+                    prey_actions = prey_actions.view(batch, n_prey, 1)
 
                 prey_traj[:, t, :, :, :4] = prey_states
                 prey_traj[:, t, :, :, 4:] = prey_actions.unsqueeze(3).expand(-1, -1, n_neigh, -1)
