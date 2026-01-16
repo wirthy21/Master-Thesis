@@ -10,19 +10,33 @@ from torch.utils.data import Dataset
 from deep_sort_realtime.deepsort_tracker import DeepSort
 from marl_aquarium.env.utils import scale
 
+"""
+References:
+YOLO:            https://docs.ultralytics.com/usage/python/
+DeepSORT:        https://pypi.org/project/deep-sort-realtime/
+DeepSORT GitHub: https://github.com/nwojke/deep_sort
+"""
 
-# names: {0: 'Predator', 1: 'Predator Head', 2: 'Prey', 3: 'Prey Head'}
 
 def process_frame(cap, model, tracker, frame_idx, device="cpu"):
+    """
+    Input: video frame
+    Output: dict of track records for the frame
+    """
     _, frame = cap.read()
     height, width = frame.shape[:2]
+
+    # run yolo on the frame
     result = model(frame, verbose=False, device=device)[0]
 
-    xywh = result.boxes.xywh.cpu().numpy()
-    confs = result.boxes.conf.cpu().numpy()
-    cls_ids = result.boxes.cls.cpu().numpy().astype(int)
+    xywh = result.boxes.xywh.cpu().numpy() # bounding boxes (x_center, y_center, width, height)
+    confs = result.boxes.conf.cpu().numpy() # confidence per detection
+    cls_ids = result.boxes.cls.cpu().numpy().astype(int) # class id per detection
 
+    # necessary format for DeepSORT
     raw_detections = list(zip(xywh, confs, cls_ids))
+
+    # update tracks, with detections and the current frame
     tracks = tracker.update_tracks(raw_detections, frame=frame)
 
     records = []
@@ -30,8 +44,11 @@ def process_frame(cap, model, tracker, frame_idx, device="cpu"):
         if not track.is_confirmed():
             continue
 
+        # track mean contains kalman filter states (x, y, w, h, vx, vy)
         x_raw = track.mean[0]
         y_raw = track.mean[1]
+
+        # clip coordinates for frame bounds (necessary due to kalman filter predictions)
         x = float(np.clip(x_raw, 0, width))
         y = float(np.clip(y_raw, 0, height))
 
@@ -43,33 +60,39 @@ def process_frame(cap, model, tracker, frame_idx, device="cpu"):
                         "y":        y,
                         "vx":       float(track.mean[4]),
                         "vy":       float(track.mean[5]),
-                        "speed":    abs(float(math.hypot(track.mean[4], track.mean[5]))), #vx, vy
-                        "angle":    float(math.atan2(track.mean[5], track.mean[4]))}) #vy, vx = radians
+                        "speed":    abs(float(math.hypot(track.mean[4], track.mean[5]))),
+                        "angle":    float(math.atan2(track.mean[5], track.mean[4]))})
         
     return records
 
 
 def filter_frames(total_frames):
-    # Use only necessary detections of Pred Head and Prey
+    """
+    Input: records of all frames
+    Output: filtered records with only best predator and all prey detections, max speed for env settings
+    """
+
+    # use only necessary detections of Pred Head and Prey {0: 'Predator', 1: 'Predator Head', 2: 'Prey', 3: 'Prey Head'}
     pred_prey_frames = [frame for frame in total_frames if frame['label'] in ('1', '2')] #Pred Head 1, Prey 2
 
-    # Filter detections with None confidence
+    # filter detections with None confidence
     filtered_conf = [frame for frame in pred_prey_frames if frame['conf'] is not None]
 
-    # Drop multiple Pred Detections
+    # drop multiple pred detections, keep only the one with highest confidence
     best_pred_label = {}
     preys = []
-
     for data in filtered_conf:
         frame = data['frame']
-        if data['label'] == '1': #Pred Head 1, Prey 2
+        if data['label'] == '1':
             if frame not in best_pred_label or data['conf'] > best_pred_label[frame]['conf']:
                 best_pred_label[frame] = data
         else:
             preys.append(data)
 
+    # combine best pred and all preys
     best_pred_prey_frames = list(best_pred_label.values()) + preys
 
+    # compute max speed among all detections
     all_speeds = [det["speed"] for det in best_pred_prey_frames]
     max_speed = max(all_speeds)
 
@@ -240,3 +263,11 @@ def get_expert_tensors(filtered_frames, extracted_windows, width, height, max_sp
     coordinates = torch.stack(window_coordinates, dim=0)
 
     return pred_tensor, prey_tensor, coordinates
+
+
+def sliding_window(tensor, window_size=10):
+    sequences = []
+    for start in range(0, tensor.size(0) - window_size + 1):
+        end = start + window_size
+        sequences.append(tensor[start:end])
+    return torch.stack(sequences)

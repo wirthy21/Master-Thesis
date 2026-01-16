@@ -50,7 +50,7 @@ def gradient_estimate(theta, rewards_norm, epsilons, sigma, lr, num_perturbation
 
 
 
-def discriminator_reward(discriminator, gen_tensor, mode="mean"):
+'''def discriminator_reward(discriminator, gen_tensor, mode="mean"):
     matrix = discriminator(gen_tensor)
 
     if mode == "mean":
@@ -70,9 +70,64 @@ def discriminator_reward(discriminator, gen_tensor, mode="mean"):
         dis_scale   = dis_reward.detach().abs().mean()   
         avoid_scale = avoid_reward.detach().mean().clamp(min=1e-8)
 
-        alpha = 0.2 * dis_scale / avoid_scale
+        alpha = 1.0 * dis_scale / avoid_scale
 
-        return dis_reward + alpha * avoid_reward
+        return dis_reward + alpha * avoid_reward'''
+
+
+def discriminator_reward(
+    discriminator,
+    gen_tensor,
+    mode="mean",
+    alpha_coeff=1.0,
+    r_avoid=0.5,
+    r_avoid_quantile=None,
+    tau_attack=0.05,
+    scale_mode="meanabs",
+    center=True,
+    eps=1e-8,
+):
+    matrix = discriminator(gen_tensor)
+    dis_reward = matrix.mean(dim=(1, 2))
+
+    def _scale(x):
+        if scale_mode == "std":
+            return x.detach().std().clamp(min=eps)
+        return x.detach().abs().mean().clamp(min=eps)
+
+    if mode == "mean":
+        return dis_reward
+
+    gt = gen_tensor[:, :-1]
+    feat_dim = gen_tensor.shape[-1]
+
+    if mode == "avoid":
+        dx = gt[..., 1]
+        dy = gt[..., 2]
+        dist = torch.sqrt(dx * dx + dy * dy + eps)
+        pred_dist = dist[..., 0]
+
+        if r_avoid_quantile is not None:
+            r_avoid = torch.quantile(pred_dist.reshape(-1), float(r_avoid_quantile)).item()
+
+        avoid_reward = (-torch.relu(r_avoid - pred_dist)).mean(dim=(1, 2))
+        term = avoid_reward - avoid_reward.mean().detach() if center else avoid_reward
+
+        alpha = alpha_coeff * (_scale(dis_reward) / _scale(term))
+        return dis_reward + alpha * term
+
+    if mode == "attack":
+        dx = gt[..., 0]
+        dy = gt[..., 1]
+        dist = torch.sqrt(dx * dx + dy * dy + eps)
+
+        softmin = -tau_attack * torch.logsumexp(-dist / tau_attack, dim=-1)
+        attack_reward = (-softmin).mean(dim=(1, 2))
+
+        term = attack_reward - attack_reward.mean().detach() if center else attack_reward
+
+        alpha = alpha_coeff * (_scale(dis_reward) / _scale(term))
+        return dis_reward + alpha * term
 
 
 def optimize_es(role, module, mode,
