@@ -111,10 +111,11 @@ def discriminator_reward(
             r_avoid = torch.quantile(pred_dist.reshape(-1), float(r_avoid_quantile)).item()
 
         avoid_reward = (-torch.relu(r_avoid - pred_dist)).mean(dim=(1, 2))
-        term = avoid_reward - avoid_reward.mean().detach() if center else avoid_reward
+        centered_avoid = avoid_reward - avoid_reward.mean().detach() if center else avoid_reward
 
-        alpha = alpha_coeff * (_scale(dis_reward) / _scale(term))
-        return dis_reward + alpha * term
+        alpha = alpha_coeff * (_scale(dis_reward) / _scale(centered_avoid))
+        reward = dis_reward + alpha * centered_avoid
+        return reward
 
     if mode == "attack":
         dx = gt[..., 0]
@@ -124,10 +125,11 @@ def discriminator_reward(
         softmin = -tau_attack * torch.logsumexp(-dist / tau_attack, dim=-1)
         attack_reward = (-softmin).mean(dim=(1, 2))
 
-        term = attack_reward - attack_reward.mean().detach() if center else attack_reward
+        centered_attack_term = attack_reward - attack_reward.mean().detach() if center else attack_reward
 
-        alpha = alpha_coeff * (_scale(dis_reward) / _scale(term))
-        return dis_reward + alpha * term
+        alpha = alpha_coeff * (_scale(dis_reward) / _scale(centered_attack_term))
+        reward = dis_reward + alpha * centered_attack_term
+        return reward
 
 
 def optimize_es(role, module, mode,
@@ -406,59 +408,11 @@ def compute_wasserstein_loss(expert_scores, policy_scores, lambda_gp, gp):
     loss = policy_scores.mean() - expert_scores.mean()
     loss_gp = loss + lambda_gp * gp
     return loss, loss_gp
-    
-
-def remaining_time(num_generations, last_epoch_duration, current_generation):
-    remaining_epochs = num_generations - current_generation - 1
-    remaining = remaining_epochs * last_epoch_duration
-    finish_ts = time.time() + remaining
-
-    finish_struct = time.localtime(finish_ts)
-    estimated_time = time.strftime("%d.%m.%Y %H:%M:%S", finish_struct)
-
-    min = int(last_epoch_duration // 60)
-    sec = int(last_epoch_duration % 60)
-    epoch_str = f"{min}:{sec:02d}"
-    return estimated_time, epoch_str
 
 
-
-def save_hyperparameter(save_dir,
-                        max_steps=None,
-                        num_generations=None,
-                        gamma=None,
-                        lr_policy=None,
-                        num_perturbations=None,
-                        sigma=None,
-                        deterministic=None,
-                        dis_balance_factor=None,
-                        noise=None,
-                        lr_disc=None,
-                        lambda_gp=None,
-                        performance_eval=None):
-    path = os.path.join(save_dir, "hyperparameters.txt")
-    with open(path, "w") as f:
-        f.write("# === Hyperparameters ===\n\n")
-
-        f.write(f"# Expert\n")
-        f.write(f"max_steps = {max_steps}\n\n")
-
-        f.write(f"# Training\n")
-        f.write(f"num_generations = {num_generations}\n")
-        f.write(f"gamma = {gamma}\n\n")
-
-        f.write(f"# Policy\n")
-        f.write(f"lr_policy = {lr_policy}\n")
-        f.write(f"num_perturbations = {num_perturbations}\n")
-        f.write(f"sigma = {sigma}\n")
-        f.write(f"deterministic = {deterministic}\n\n")
-
-        f.write(f"# Discriminator\n")
-        f.write(f"dis_balance_factor = {dis_balance_factor}\n")
-        f.write(f"noise = {noise}\n")
-        f.write(f"lr_disc = {lr_disc}\n")
-        f.write(f"lambda_gp = {lambda_gp}\n\n")
-
-        f.write(f"performance_eval = {performance_eval}\n\n")
-
-    return path
+def sliding_window(tensor, window_size=10):
+    sequences = []
+    for start in range(0, tensor.size(0) - window_size + 1):
+        end = start + window_size
+        sequences.append(tensor[start:end])
+    return torch.stack(sequences)

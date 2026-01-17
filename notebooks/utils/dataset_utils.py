@@ -1,26 +1,36 @@
 import os
 import cv2
+import math
+import torch
 import numpy as np
 import pandas as pd
-import torch
-import math
-from collections import defaultdict
 from ultralytics import YOLO
+from collections import defaultdict
 from torch.utils.data import Dataset
+from scipy.optimize import linear_sum_assignment
 from deep_sort_realtime.deepsort_tracker import DeepSort
-from marl_aquarium.env.utils import scale
 
 """
+1. Part - Functions for dataset processing from videos
+2. Part - Functions for processing hand-labeled trajectory data
+
 References:
 YOLO:            https://docs.ultralytics.com/usage/python/
 DeepSORT:        https://pypi.org/project/deep-sort-realtime/
 DeepSORT GitHub: https://github.com/nwojke/deep_sort
+Data Labeling:   https://labelstud.io/
+Hungarian Alg.:  https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.linear_sum_assignment.html
+
+Wu et al. (2025) - Adversarial imitation learning with deep attention network for swarm systems (https://doi.org/10.1007/s40747-024-01662-2)
 """
 
+##### Video Processing Functions #####
 
 def process_frame(cap, model, tracker, frame_idx, device="cpu"):
     """
-    Input: video frame
+    Processes a video to obtain track records
+
+    Input: video, yolo model, deepsort tracker, frame index, device
     Output: dict of track records for the frame
     """
     _, frame = cap.read()
@@ -68,6 +78,8 @@ def process_frame(cap, model, tracker, frame_idx, device="cpu"):
 
 def filter_frames(total_frames):
     """
+    Filters frames to keep only one predator and all prey detections
+
     Input: records of all frames
     Output: filtered records with only best predator and all prey detections, max speed for env settings
     """
@@ -100,15 +112,19 @@ def filter_frames(total_frames):
 
 
 def find_valid_windows(filtered_frames, window_len=10, total_detections=33):
-    # track ids pro frame
+    """
+    Finds continuous windows where all detections are present
+
+    Input: records of all filtered frames, window length, total number of detections expected
+    Output: continuous windows where all detections are present
+    """
+
+    # get all track ids per frame
     ids_by_frame = defaultdict(set)
     for d in filtered_frames:
         ids_by_frame[int(d["frame"])].add(int(d["track_id"]))
 
     frames = sorted(ids_by_frame.keys())
-    
-    if not frames:
-        return []
 
     episodes = []
     i = 0
@@ -117,6 +133,7 @@ def find_valid_windows(filtered_frames, window_len=10, total_detections=33):
         frame = frames[i]
         inital_ids = ids_by_frame[frame]
 
+        # skip if number of detections is wrong
         if len(inital_ids) != total_detections:
             i += 1
             continue
@@ -124,31 +141,37 @@ def find_valid_windows(filtered_frames, window_len=10, total_detections=33):
         start = frame
         end = frame
 
+        # extend the episode when frames are consecutive and have same ids
         while i + 1 < len(frames):
-            f_next = frames[i + 1]
-            if f_next != end + 1:
+            next_frame = frames[i + 1]
+            if next_frame != end + 1:
                 break
-            if ids_by_frame[f_next] != inital_ids:
+            if ids_by_frame[next_frame] != inital_ids:
                 break
             i += 1
-            end = f_next
+            end = next_frame
 
         length = end - start + 1
         
+        # keep valid windows only
         if length >= window_len:
-            episodes.append({
-                "start_frame": start,
-                "end_frame": end,
-                "length": length,
-                "ids": sorted(inital_ids)
-            })
+            episodes.append({"start_frame": start,
+                             "end_frame": end,
+                             "length": length,
+                             "ids": sorted(inital_ids)})
 
         i += 1
 
     return episodes
 
 
-def extract_windows(episodes, window_len=5):
+def extract_windows(episodes, window_len=10):
+    """
+    Splits episodes into smaller sliding windows
+
+    Input: valid episodes, window length
+    Output: extracted windows of given length from episodes
+    """
     windows = []
 
     for episode in episodes:
@@ -159,73 +182,97 @@ def extract_windows(episodes, window_len=5):
         clip_start = episode["start_frame"]
         ids = episode["ids"]
 
+        # number of windows that can be extracted from the episode
         num_windows = clip_len - window_len + 1
         for offset in range(num_windows):
             window_start = clip_start + offset
             window_end = window_start + window_len - 1
 
-            windows.append({
-                "start_frame": window_start,
-                "end_frame": window_end,
-                "length": window_len,
-                "ids": ids
-            })
+            windows.append({"start_frame": window_start,
+                            "end_frame": window_end,
+                            "length": window_len,
+                            "ids": ids})
 
     return windows
 
 
 
 def get_expert_features(frame, width, height, max_speed=10):    
+    """
+    Converts detections in a frame to expert feature tensors (derived from Wu et al. 2025)
+
+    Input: frame detections, frame width, frame height, max speed for normalization
+    Output: predator & prey tensor and x, y, theta for init_pool
+    """
+
+    # Sort frames so that predator head is always first
     frame = sorted(frame, key=lambda det: (det['label'] != '1', int(det['track_id']))) # sort so that Pred Head is always first
 
-    vscale = np.vectorize(scale)
-
+    # extract positions
     xs = np.array([det['x'] for det in frame])
     ys = np.array([det['y'] for det in frame])
 
+    # clip to frame bounds (necessary due to kalman filter predictions)
     clipped_xs = np.clip(xs, 0, width)
     clipped_ys = np.clip(ys, 0, height)
 
-    scaled_xs = vscale(clipped_xs, 0, width, 0, 1) # [0, 1]
-    scaled_ys = vscale(clipped_ys, 0, height, 0, 1) # [0, 1]
+    # scale positions to [0, 1]
+    scaled_xs = clipped_xs / width
+    scaled_ys = clipped_ys / height
 
-    vxs = np.array([det['vx'] for det in frame]) # Range [-10.961784489688785 : 13.193770118386169]
-    vys = np.array([det['vy'] for det in frame]) # Range [-9.267164570677894 : 11.038460817819471]
+    # extract velocities
+    vxs = np.array([det['vx'] for det in frame])
+    vys = np.array([det['vy'] for det in frame])
 
+    # extract heading angle, scale to [0, 1]
     thetas = np.array([det['angle'] for det in frame])
-    scaled_thetas = vscale(thetas, -np.pi, np.pi, 0, 1)
+    scaled_thetas = (thetas + np.pi) / (2 * np.pi)
 
-    cos_t = np.cos(thetas)                        
-    sin_t = np.sin(thetas)
-
-    # pairwise distances
+    # compute pairwise distances
     dx = scaled_xs[None, :] - scaled_xs[:, None] # [-1, 1]
     dy = scaled_ys[None, :] - scaled_ys[:, None] # [-1, 1]
 
-    # relative velocities
+    # compute relative velocities in the agent's heading direction
+    cos_t = np.cos(thetas)                        
+    sin_t = np.sin(thetas)
     rel_vx = cos_t[:, None] * vxs[None, :] + sin_t[:, None] * vys[None, :]
     rel_vy = -sin_t[:, None] * vxs[None, :] + cos_t[:, None] * vys[None, :]
 
+    # clip and scale relative velocities to [-1, 1], clipping necessary due to detection jumps
     scaled_rel_vx = np.clip(rel_vx, -max_speed, max_speed) / max_speed
     scaled_rel_vy = np.clip(rel_vy, -max_speed, max_speed) / max_speed
 
+    # repeat theta for each agent to fit matrix shape
     n = scaled_xs.shape[0]
     thetas_mat = np.tile(scaled_thetas[:, None], (1, n))
+
+    # build feature tensor
     features = np.stack([dx, dy, scaled_rel_vx, scaled_rel_vy, thetas_mat], axis=-1)
 
-    mask = ~np.eye(n, dtype=bool) # shape (N, N)
+    # remove self-interactions
+    mask = ~np.eye(n, dtype=bool)
     neigh = features[mask].reshape(n, n-1, 5)
 
+    # separate predator and prey tensors
     pred_tensor = torch.from_numpy(neigh[0]).unsqueeze(0)
-    prey_tensor = torch.from_numpy(neigh[1:]) # shape (N-1, N-1, 5)
+    prey_tensor = torch.from_numpy(neigh[1:])
 
     return pred_tensor, prey_tensor, scaled_xs.tolist(), scaled_ys.tolist(), thetas.tolist()
 
 
 def get_expert_tensors(filtered_frames, extracted_windows, width, height, max_speed=10, window_size=5):
+    """
+    Builts expert tensor for all extracted windows
+
+    Input: frame detections, valid windows, frame width, frame height, max speed for normalization, window size
+    Output: predator & prey tensor window, and coordinates for init_pool
+    """
+
+    # return empty tensors if no windows extracted
     if len(extracted_windows) == 0:
         return torch.empty(0), torch.empty(0)
     
+    # group detections by frame number
     dets_by_frame = defaultdict(list)
     for det in filtered_frames:
         dets_by_frame[int(det["frame"])].append(det)
@@ -235,8 +282,11 @@ def get_expert_tensors(filtered_frames, extracted_windows, width, height, max_sp
     prey_windows = []
     window_coordinates = []
 
+    # build tensors for each window
     for idx, start in enumerate(start_frames):
         window_detections = []
+
+        # collect detections for the window
         for frame in range(start, start + window_size):
             dets = dets_by_frame[int(frame)]
             window_detections.append(dets)
@@ -245,19 +295,23 @@ def get_expert_tensors(filtered_frames, extracted_windows, width, height, max_sp
         preys = []
         frame_coordinates = []
 
+        # convert each frames detections to tensors
         for dets in window_detections:
             pred_tensor, prey_tensor, xs, ys, thetas = get_expert_features(dets, width, height, max_speed)
 
             preds.append(pred_tensor)
             preys.append(prey_tensor)
             
+            # store coordinates for init_pool
             xy = torch.from_numpy(np.stack([xs, ys, thetas], axis=-1)).float()
             frame_coordinates.append(xy)
 
+        # stack frames inside the window
         pred_windows.append(torch.stack(preds, dim=0))
         prey_windows.append(torch.stack(preys, dim=0))
         window_coordinates.append(torch.stack(frame_coordinates, dim=0))
 
+    # stack all windows in one big tensor
     pred_tensor = torch.stack(pred_windows, dim=0)
     prey_tensor = torch.stack(prey_windows, dim=0)
     coordinates = torch.stack(window_coordinates, dim=0)
@@ -265,9 +319,164 @@ def get_expert_tensors(filtered_frames, extracted_windows, width, height, max_sp
     return pred_tensor, prey_tensor, coordinates
 
 
-def sliding_window(tensor, window_size=10):
-    sequences = []
-    for start in range(0, tensor.size(0) - window_size + 1):
-        end = start + window_size
-        sequences.append(tensor[start:end])
-    return torch.stack(sequences)
+
+##### Hand-labeled Trajectories Functions #####
+
+
+def scale_data(data):
+    """
+    Convert annotations from JSON format into predator & prey point arrays
+
+    Input: JSON data
+    Output: predator & prey point arrays
+    """
+    prey_pts = []
+    pred_pts = None
+
+    # extract points from annotations (Label-Studio structure)
+    result = data["annotations"][0]["result"]
+
+    for r in result:
+        width, height = r["original_width"], r["original_height"]
+
+        # coordinates are stored as percentage values, convert to pixel values
+        value = r["value"]
+        x = (value["x"] / 100.0) * width
+        y = (value["y"] / 100.0) * height
+
+        # get label for the point
+        labels = value.get("keypointlabels", [])
+        label = labels[0] if labels else "Prey"
+        if label == "Predator":
+            pred_pts = (x, y)
+        else:
+            prey_pts.append((x, y))
+
+    # convert to numpy arrays
+    pred_arr = np.array([pred_pts])
+    prey_arr = np.array(prey_pts)
+    return pred_arr, prey_arr
+
+
+def hungarian_assign(point_seq):
+    """
+    Identity tracking across frames using Hungarian algorithm
+
+    Input: predator & prey point arrays
+    Output: ordered predator & prey point arrays
+    """
+    ordered = [point_seq[0]]
+    prev = point_seq[0]
+
+    # for each time step, assign points to previous points using Hungarian algorithm
+    for t in range(1, len(point_seq)):
+        current_point = point_seq[t]
+
+        # pairwise distance matrix
+        distance = np.linalg.norm(prev[:, None, :] - current_point[None, :, :], axis=2)
+
+        # best matching with Hungarian algorithm
+        _, assigned_current_indices = linear_sum_assignment(distance)
+
+        # reorder current points based on assignment
+        current_order = current_point[assigned_current_indices]
+        ordered.append(current_order)
+        prev = current_order
+
+    # stack ordered points into array
+    ordered = np.stack(ordered, axis=0)  # (T, N, 2)
+    return ordered
+
+
+def get_velocity(positions):
+    """
+    Computes frame-to-frame velocity from positions
+
+    Input: positions from ordered predator & prey point arrays
+    Output: velocities
+    """
+    velocities = []
+    for i in range(1, len(positions)):
+        # position between consecutive frames
+        velo = positions[i] - positions[i - 1]
+        velocity = velo / 2 #every second frame got labeled
+        velocities.append(velocity)
+    return np.array(velocities)
+
+
+def get_records(pred_ordered, prey_ordered, pred_velocities, prey_velocities):
+    """
+    Builds records from positions and velocities, to fit video pipeline format
+
+    Input: positions and velocities of predator & prey
+    Output: records list
+    """
+    records = []
+    pred_vel = pred_velocities.shape[0]
+    prey_num = prey_ordered.shape[1]
+
+    for step in range(pred_vel):
+        x  = float(pred_ordered[step, 0, 0])
+        y  = float(pred_ordered[step, 0, 1])
+        vx = float(pred_velocities[step, 0, 0])
+        vy = float(pred_velocities[step, 0, 1])
+
+        # predator record
+        records.append({"frame": step,
+                        "label": "Predator",
+                        "conf": 1.0,
+                        "x": x, 
+                        "y": y,
+                        "vx": vx, 
+                        "vy": vy,
+                        "speed": float(math.hypot(vx, vy)),
+                        "angle": float(math.atan2(vy, vx))})
+
+        # prey records
+        for i in range(prey_num):
+            x  = float(prey_ordered[step, i, 0])
+            y  = float(prey_ordered[step, i, 1])
+            vx = float(prey_velocities[step, i, 0])
+            vy = float(prey_velocities[step, i, 1])
+
+            records.append({"frame": step,
+                            "label": "Prey",
+                            "conf": 1.0,
+                            "x": x, 
+                            "y": y,
+                            "vx": vx, 
+                            "vy": vy,
+                            "speed": float(math.hypot(vx, vy)),
+                            "angle": float(math.atan2(vy, vx))})
+
+    return records
+
+
+def get_hl_expert_tensors(records, max_speed):
+    """
+    Convert hand-labeled records into expert tensors
+
+    Input: records, max speed for normalization
+    Output: predator & prey expert tensors
+    """
+    preds = []
+    preys = []
+
+    # Iterate frames in correct order
+    frame_ids = sorted({rec["frame"] for rec in records})
+    for frame_idx in frame_ids:
+        # get records for the frame
+        frame = [rec for rec in records if rec["frame"] == frame_idx]
+        if not frame:
+            continue
+
+        # convert frame records into expert tensors
+        pred_tensor, prey_tensor = get_expert_features(frame, width=2160, height=2160, max_speed=max_speed)
+        preds.append(pred_tensor)
+        preys.append(prey_tensor)
+
+    # stack frames into tensors
+    pred_tensor = torch.stack(preds, dim=0)
+    prey_tensor = torch.stack(preys, dim=0)
+
+    return pred_tensor, prey_tensor
