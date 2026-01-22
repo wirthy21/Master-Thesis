@@ -226,7 +226,6 @@ def get_expert_features(frame, width, height, max_speed=10):
 
     # extract heading angle, scale to [0, 1]
     thetas = np.array([det['angle'] for det in frame])
-    scaled_thetas = (thetas + np.pi) / (2 * np.pi)
 
     # compute pairwise distances
     dx = scaled_xs[None, :] - scaled_xs[:, None] # [-1, 1]
@@ -242,16 +241,13 @@ def get_expert_features(frame, width, height, max_speed=10):
     scaled_rel_vx = np.clip(rel_vx, -max_speed, max_speed) / max_speed
     scaled_rel_vy = np.clip(rel_vy, -max_speed, max_speed) / max_speed
 
-    # repeat theta for each agent to fit matrix shape
-    n = scaled_xs.shape[0]
-    thetas_mat = np.tile(scaled_thetas[:, None], (1, n))
-
     # build feature tensor
-    features = np.stack([dx, dy, scaled_rel_vx, scaled_rel_vy, thetas_mat], axis=-1)
+    features = np.stack([dx, dy, scaled_rel_vx, scaled_rel_vy], axis=-1)
 
     # remove self-interactions
+    n = scaled_xs.shape[0]
     mask = ~np.eye(n, dtype=bool)
-    neigh = features[mask].reshape(n, n-1, 5)
+    neigh = features[mask].reshape(n, n-1, 4)
 
     # separate predator and prey tensors
     pred_tensor = torch.from_numpy(neigh[0]).unsqueeze(0)
@@ -285,7 +281,6 @@ def get_expert_tensors(filtered_frames, extracted_windows, width, height, max_sp
     # build tensors for each window
     for idx, start in enumerate(start_frames):
         window_detections = []
-
         # collect detections for the window
         for frame in range(start, start + window_size):
             dets = dets_by_frame[int(frame)]
@@ -293,28 +288,59 @@ def get_expert_tensors(filtered_frames, extracted_windows, width, height, max_sp
 
         preds = []
         preys = []
+        thetas = []
         frame_coordinates = []
 
         # convert each frames detections to tensors
         for dets in window_detections:
-            pred_tensor, prey_tensor, xs, ys, thetas = get_expert_features(dets, width, height, max_speed)
+            pred_tensor, prey_tensor, xs, ys, theta = get_expert_features(dets, width, height, max_speed)
 
             preds.append(pred_tensor)
             preys.append(prey_tensor)
+
+            theta_tensor = torch.tensor(theta, dtype=torch.float32)
+            thetas.append(theta_tensor)
             
             # store coordinates for init_pool
-            xy = torch.from_numpy(np.stack([xs, ys, thetas], axis=-1)).float()
+            xy = torch.from_numpy(np.stack([xs, ys, theta], axis=-1)).float()
             frame_coordinates.append(xy)
 
-        # stack frames inside the window
-        pred_windows.append(torch.stack(preds, dim=0))
-        prey_windows.append(torch.stack(preys, dim=0))
-        window_coordinates.append(torch.stack(frame_coordinates, dim=0))
+        # compute delta theta for the window
+        theta_stacked = torch.stack(thetas, dim=0)
+        dtheta = theta_stacked[1:] - theta_stacked[:-1]
+        dtheta_pi = (dtheta + np.pi) % (2 * np.pi) - np.pi
+        dtheta_scaled = (dtheta_pi + np.pi) / (2 * np.pi) # scale to [0, 1]
 
-    # stack all windows in one big tensor
+        preds_out = []
+        preys_out = []
+
+        for t in range(window_size):
+            if t < window_size - 1:
+                # broadcast delta theta to predator tensor
+                pred_dt = dtheta_scaled[t, 0].view(1, 1, 1).repeat(1, preds[t].shape[1], 1)
+
+                # broadcast delta theta to prey tensor
+                prey_dt = dtheta_scaled[t, 1:].view(-1, 1, 1).repeat(1, preys[t].shape[1], 1)
+            else:
+                # Imporant: last frame has no delta theta, fill with zeros
+                # Action only relevant for pretraining (correctly handled there)
+                # GAIL trainings on transition embeddings using states-only, last action therefore no problem (better than dropping)
+                pred_dt = torch.zeros((1, preds[t].shape[1], 1), dtype=torch.float32)
+                prey_dt = torch.zeros((preys[t].shape[0], preys[t].shape[1], 1), dtype=torch.float32)
+
+            # concatenate as last feature channel
+            preds_out.append(torch.cat([preds[t].float(), pred_dt], dim=-1))  
+            preys_out.append(torch.cat([preys[t].float(), prey_dt], dim=-1))   
+
+        # stack frames inside the window
+        pred_windows.append(torch.stack(preds_out, dim=0))              
+        prey_windows.append(torch.stack(preys_out, dim=0))                
+        window_coordinates.append(torch.stack(frame_coordinates, dim=0))   
+
+    # stack all windows
     pred_tensor = torch.stack(pred_windows, dim=0)
-    prey_tensor = torch.stack(prey_windows, dim=0)
-    coordinates = torch.stack(window_coordinates, dim=0)
+    prey_tensor = torch.stack(prey_windows, dim=0)  
+    coordinates = torch.stack(window_coordinates, dim=0) 
 
     return pred_tensor, prey_tensor, coordinates
 
@@ -423,7 +449,8 @@ def get_records(pred_ordered, prey_ordered, pred_velocities, prey_velocities):
 
         # predator record
         records.append({"frame": step,
-                        "label": "Predator",
+                        "track_id": 1,
+                        "label": "1",
                         "conf": 1.0,
                         "x": x, 
                         "y": y,
@@ -440,7 +467,8 @@ def get_records(pred_ordered, prey_ordered, pred_velocities, prey_velocities):
             vy = float(prey_velocities[step, i, 1])
 
             records.append({"frame": step,
-                            "label": "Prey",
+                            "track_id": i + 1,
+                            "label": "2",
                             "conf": 1.0,
                             "x": x, 
                             "y": y,
@@ -461,6 +489,7 @@ def get_hl_expert_tensors(records, max_speed):
     """
     preds = []
     preys = []
+    thetas = []
 
     # Iterate frames in correct order
     frame_ids = sorted({rec["frame"] for rec in records})
@@ -471,12 +500,62 @@ def get_hl_expert_tensors(records, max_speed):
             continue
 
         # convert frame records into expert tensors
-        pred_tensor, prey_tensor = get_expert_features(frame, width=2160, height=2160, max_speed=max_speed)
+        pred_tensor, prey_tensor, xs, ys, theta = get_expert_features(frame, width=2160, height=2160, max_speed=max_speed)
         preds.append(pred_tensor)
         preys.append(prey_tensor)
 
+        theta_tensor = torch.tensor(theta, dtype=torch.float32)
+        thetas.append(theta_tensor)
+
+    # return empty if nothing collected
+    if len(preds) == 0:
+        return torch.empty(0), torch.empty(0)
+
+    # compute delta theta across frames
+    theta_stacked = torch.stack(thetas, dim=0)
+    dtheta = theta_stacked[1:] - theta_stacked[:-1]
+    dtheta_pi = (dtheta + np.pi) % (2 * np.pi) - np.pi
+    dtheta_scaled = (dtheta_pi + np.pi) / (2 * np.pi)  # scale to [0, 1]
+
+    preds_out = []
+    preys_out = []
+    size = len(preds)
+
+    for t in range(size):
+        if t < size - 1:
+            # broadcast delta theta to predator tensor
+            pred_dt = dtheta_scaled[t, 0].view(1, 1, 1).repeat(1, preds[t].shape[1], 1)
+
+            # broadcast delta theta to prey tensor
+            prey_dt = dtheta_scaled[t, 1:].view(-1, 1, 1).repeat(1, preys[t].shape[1], 1)
+        else:
+            # Imporant: last frame has no delta theta, fill with zeros
+            # Action only relevant for pretraining (correctly handled there)
+            # GAIL trainings on transition embeddings using states-only, last action therefore no problem (better than dropping)
+            pred_dt = torch.zeros((1, preds[t].shape[1], 1), dtype=torch.float32)
+            prey_dt = torch.zeros((preys[t].shape[0], preys[t].shape[1], 1), dtype=torch.float32)
+
+        # concatenate as last feature channel
+        preds_out.append(torch.cat([preds[t].float(), pred_dt], dim=-1))
+        preys_out.append(torch.cat([preys[t].float(), prey_dt], dim=-1))
+
     # stack frames into tensors
-    pred_tensor = torch.stack(preds, dim=0)
-    prey_tensor = torch.stack(preys, dim=0)
+    pred_tensor = torch.stack(preds_out, dim=0)
+    prey_tensor = torch.stack(preys_out, dim=0)
 
     return pred_tensor, prey_tensor
+
+
+def extract_tensor_windows(tensor, window_len=10):
+    """
+    Splits a tensor along time dimension into sliding windows
+
+    Input: pred & prey tensor
+    Output: stacked windows
+    """
+    clip_len = tensor.shape[0]
+    windows = []
+    for start in range(clip_len - window_len + 1):
+        windows.append(tensor[start:start + window_len])
+
+    return torch.stack(windows, dim=0)

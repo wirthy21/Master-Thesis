@@ -251,12 +251,19 @@ def vicreg_loss(z1, z2, sim_coeff=25.0, std_coeff=15.0, cov_coeff=5.0, eps=1e-4)
     return loss, logs
 
 
-def sample_data(data, batch_size=10):
+def sample_data(data, batch_size=10, window_len=10):
     """
-    Samples a random batch of trajectories from the expert data tensor
+    Samples a random batch of trajectories from tensor
     """
-    idx = torch.randint(0, data.size(0), (batch_size,), device=data.device)
-    return data[idx]
+    if data.dim() == 5: # expert tensor 
+        idx = torch.randint(0, data.size(0), (batch_size,), device=data.device)
+        return data[idx]
+    
+    if data.dim() == 4: # generative tensor
+        trajectory_len = data.size(0)
+        start = torch.randint(0, trajectory_len - window_len + 1, (batch_size,), device=data.device)
+        return torch.stack([data[s:s + window_len] for s in start.tolist()], dim=0) # generate same shape as expert batch
+    
 
 
 
@@ -277,7 +284,7 @@ def train_encoder(encoder, projector, aug, exp_tensor, epochs, optimizer, role="
         projector.train()
 
         # sample expert batch
-        expert_batch = sample_data(exp_tensor, batch_size=10).to(device)
+        expert_batch = sample_data(exp_tensor, batch_size=10, window_len=10).to(device)
 
         # exclude action feature
         states = expert_batch[..., :-1]

@@ -21,11 +21,7 @@ Gradient Penalty: https://towardsdatascience.com/demystified-wasserstein-gan-wit
 """
 
 
-def gradient_estimate(theta, rewards_norm, 
-                      epsilons, sigma, 
-                      lr, num_perturbations,
-                      rel_clip=0.01):
-    
+def gradient_estimate(theta, rewards_norm, epsilons, sigma, lr, num_perturbations, rel_clip=0.01):
     """
     Estimates an ES gradient step from mirrored perturbations
 
@@ -63,87 +59,58 @@ def gradient_estimate(theta, rewards_norm,
                         "clip_ratio": float(clip_ratio.item())}
 
 
+def discriminator_reward(discriminator, gen_tensor, mode="mean", lambda_mode=None):
+    """
+    Computes rewards from discriminator outputs, with addtional rewards for prey avoidance or predator attack
 
-'''def discriminator_reward(discriminator, gen_tensor, mode="mean"):
+    Input: discriminator, generated trajectory tensor, reward mode, lambda weights
+    Output: computed rewards
+    """
+
+    # get discriminator output matrix
     matrix = discriminator(gen_tensor)
 
-    if mode == "mean":
-        return matrix.mean(dim=(1, 2))
-
-    if mode == "avoid":
-        dis_reward = matrix.mean(dim=(1, 2))
-
-        dx = gen_tensor[:, :-1, :, :, 1]
-        dy = gen_tensor[:, :-1, :, :, 2]
-        dist = torch.sqrt(dx**2 + dy**2)
-
-        pred_dist = dist[:, :, :, 0]
-
-        avoid_reward = (1.0 - torch.exp(-pred_dist / 0.05)).mean(dim=(1, 2))
-
-        dis_scale   = dis_reward.detach().abs().mean()   
-        avoid_scale = avoid_reward.detach().mean().clamp(min=1e-8)
-
-        alpha = 1.0 * dis_scale / avoid_scale
-
-        return dis_reward + alpha * avoid_reward'''
-
-
-def discriminator_reward(
-    discriminator,
-    gen_tensor,
-    mode="mean",
-    alpha_coeff=1.0,
-    r_avoid=0.5,
-    r_avoid_quantile=None,
-    tau_attack=0.05,
-    scale_mode="meanabs",
-    center=True,
-    eps=1e-8,
-):
-    matrix = discriminator(gen_tensor)
+    # compute mean discriminator reward
     dis_reward = matrix.mean(dim=(1, 2))
 
-    def _scale(x):
-        if scale_mode == "std":
-            return x.detach().std().clamp(min=eps)
-        return x.detach().abs().mean().clamp(min=eps)
+    if mode == "mean": # mean discriminator reward
+        return (dis_reward)
 
-    if mode == "mean":
-        return dis_reward
+    if mode == "avoid" and lambda_mode is not None: # compute avoidance reward (prey)
+        # compute euclidean distances
+        dx = gen_tensor[:, :-1, :, :, 1]
+        dy = gen_tensor[:, :-1, :, :, 2]
+        dist = torch.sqrt(dx**2 + dy**2) + 1e-8
 
-    gt = gen_tensor[:, :-1]
-    feat_dim = gen_tensor.shape[-1]
+        # distance to predator
+        pred_dist = dist[:, :, :, 0]
 
-    if mode == "avoid":
-        dx = gt[..., 1]
-        dy = gt[..., 2]
-        dist = torch.sqrt(dx * dx + dy * dy + eps)
-        pred_dist = dist[..., 0]
+        # compute avoidance reward, higher reward for larger distances
+        avoid_reward = pred_dist.mean(dim=(1, 2))
 
-        if r_avoid_quantile is not None:
-            r_avoid = torch.quantile(pred_dist.reshape(-1), float(r_avoid_quantile)).item()
+        # combine rewards
+        reward = dis_reward + lambda_mode * avoid_reward
+        return (reward, dis_reward, avoid_reward)
+    
 
-        avoid_reward = (-torch.relu(r_avoid - pred_dist)).mean(dim=(1, 2))
-        centered_avoid = avoid_reward - avoid_reward.mean().detach() if center else avoid_reward
+    if mode == "attack" and lambda_mode is not None: # compute attack reward (predator)
+        # compute euclidean distances
+        dx = gen_tensor[:, :-1, :, :, 1]
+        dy = gen_tensor[:, :-1, :, :, 2]
+        dist = torch.sqrt(dx**2 + dy**2) + 1e-8
 
-        alpha = alpha_coeff * (_scale(dis_reward) / _scale(centered_avoid))
-        reward = dis_reward + alpha * centered_avoid
-        return reward
+        # distance to preys
+        prey_dist = dist[:, :, :, 1:]
 
-    if mode == "attack":
-        dx = gt[..., 0]
-        dy = gt[..., 1]
-        dist = torch.sqrt(dx * dx + dy * dy + eps)
+        # get nearest prey 
+        nearest_prey_dist = prey_dist.min(dim=-1).values
 
-        softmin = -tau_attack * torch.logsumexp(-dist / tau_attack, dim=-1)
-        attack_reward = (-softmin).mean(dim=(1, 2))
+        # compute attack reward, gets higher reward for closer distances
+        attack_reward = (-nearest_prey_dist).mean(dim=(1, 2))
 
-        centered_attack_term = attack_reward - attack_reward.mean().detach() if center else attack_reward
-
-        alpha = alpha_coeff * (_scale(dis_reward) / _scale(centered_attack_term))
-        reward = dis_reward + alpha * centered_attack_term
-        return reward
+        # combine rewards
+        reward = dis_reward + lambda_mode * attack_reward
+        return (reward, dis_reward, attack_reward)
 
 
 def optimize_es(role, module, mode,
@@ -177,11 +144,12 @@ def optimize_es(role, module, mode,
     
     # compute rewards from discriminator
     if role == "prey":
-        reward = discriminator_reward(discriminator, prey_rollouts, mode=mode)
+        dis_reward = discriminator_reward(discriminator, prey_rollouts, mode=mode["mode"], lambda_mode=mode["lambda"])
     else:
-        reward = discriminator_reward(discriminator, pred_rollouts, mode=mode)
+        dis_reward = discriminator_reward(discriminator, pred_rollouts, mode=mode["mode"], lambda_mode=mode["lambda"])
 
     # split rewards into positive and negative perturbations
+    reward = dis_reward[0] if isinstance(dis_reward, tuple) else dis_reward
     reward_pos = reward[:num_perturbations]
     reward_neg = reward[num_perturbations:]
 
@@ -203,14 +171,13 @@ def optimize_es(role, module, mode,
     nn.utils.vector_to_parameters(theta_est, network.parameters())
     
     # return metrics, useful for stabilization and debugging
-    return {"diff_min": round(diffs.min().item(), 6),
-            "diff_max": round(diffs.max().item(), 6),
-            "diff_mean": round(diffs.mean().item(), 6),
+    return {"diff_mean": round(diffs.mean().item(), 6),
             "diff_std": round(diffs.std(unbiased=False).item(), 6),
             "delta_norm": round((theta_est - theta).norm().item(), 6),
             "clip_ratio": round(grad_metrics["clip_ratio"], 6),
             "delta_raw_norm": round(grad_metrics["delta_raw_norm"], 6),
-            "max_delta_norm": round(grad_metrics["max_delta_norm"], 6)}
+            "max_delta_norm": round(grad_metrics["max_delta_norm"], 6),
+            "avoid/attack reward": round(dis_reward[2].mean().item(), 6) if isinstance(dis_reward, tuple) else None}
 
 
 
@@ -228,6 +195,10 @@ def pretrain_policy(policy, expert_data, role=None,
 
     policy = policy.to(device)
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
+
+    # remove the last dimension of window length
+    # action calculation on transitions only, therefore last dimension has action = 0
+    expert_data = expert_data[:, :-1]
 
     # flatten expert data so each sample is (neigh, features)
     n, frames, agents, neigh, features = expert_data.shape
@@ -266,7 +237,8 @@ def pretrain_policy(policy, expert_data, role=None,
 
             # policy forward pass
             # uses deterministic = True, so policy is trained on mu for stable training
-            est_actions, weights = policy.forward(states, deterministic=deterministic).squeeze(-1)
+            est_actions, weights = policy.forward(states, deterministic=deterministic)
+            est_actions = est_actions.squeeze(-1)
             
             # compute MSE loss
             loss = F.mse_loss(est_actions, exp_actions)
@@ -296,7 +268,9 @@ def pretrain_policy(policy, expert_data, role=None,
 
                 # policy forward pass
                 # uses deterministic = True, so policy is trained on mu for stable training
-                est_actions, weights = policy.forward(states, deterministic=deterministic).squeeze(-1)
+                est_actions, weights = policy.forward(states, deterministic=deterministic)
+                est_actions = est_actions.squeeze(-1)
+                
                 loss = F.mse_loss(est_actions, exp_actions)
 
                 # track avg epoch loss (weighted by batch size)

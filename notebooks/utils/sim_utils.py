@@ -310,7 +310,6 @@ def run_env_simulation(prey_policy=None, pred_policy=None,
         # get state tensors and metrics from logs
         pred_states, prey_states, metrics = get_state_tensors(prey_log_t, predator_log_t, n_pred=n_pred,
                                                               area_width=area_width, area_height=area_height, 
-                                                              prey_speed=prey_speed, pred_speed=pred_speed,
                                                               mask=mask)
         
         metrics_list.append(metrics)
