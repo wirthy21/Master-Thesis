@@ -61,7 +61,8 @@ def gradient_estimate(theta, rewards_norm, epsilons, sigma, lr, num_perturbation
 
 def discriminator_reward(discriminator, gen_tensor, mode="mean", lambda_mode=None):
     """
-    Computes rewards from discriminator outputs, with addtional rewards for prey avoidance or predator attack
+    Computes rewards from discriminator outputs
+    Can be mean reward, avoid predator reward, or attack prey reward and their combinations
 
     Input: discriminator, generated trajectory tensor, reward mode, lambda weights
     Output: computed rewards
@@ -73,42 +74,44 @@ def discriminator_reward(discriminator, gen_tensor, mode="mean", lambda_mode=Non
     # compute mean discriminator reward
     dis_reward = matrix.mean(dim=(1, 2))
 
-    if mode == "mean": # mean discriminator reward
+    # compute euclidean distances
+    dx = gen_tensor[:, :-1, :, :, 1]
+    dy = gen_tensor[:, :-1, :, :, 2]
+    dist = torch.sqrt(dx**2 + dy**2) + 1e-8
+
+    # avoid reward based on distance to predator
+    pred_dist = dist[:, :, :, 0]
+    avoid_reward = pred_dist.mean(dim=(1, 2))
+
+    # attack reward based on nearest prey
+    prey_dist = dist[:, :, :, 1:]
+    nearest_prey_dist = prey_dist.min(dim=-1).values
+    attack_reward = (-nearest_prey_dist).mean(dim=(1, 2))
+
+
+    if mode == "mean":
+        # mean discriminator reward
         return (dis_reward)
+    
+    
+    if mode == "avoid" and lambda_mode is None:
+        # avoid reward only
+        return (avoid_reward)
 
-    if mode == "avoid" and lambda_mode is not None: # compute avoidance reward (prey)
-        # compute euclidean distances
-        dx = gen_tensor[:, :-1, :, :, 1]
-        dy = gen_tensor[:, :-1, :, :, 2]
-        dist = torch.sqrt(dx**2 + dy**2) + 1e-8
 
-        # distance to predator
-        pred_dist = dist[:, :, :, 0]
-
-        # compute avoidance reward, higher reward for larger distances
-        avoid_reward = pred_dist.mean(dim=(1, 2))
-
-        # combine rewards
+    if mode == "avoid" and lambda_mode is not None:
+        # compute combined rewards (lamda is indicator for combined reward)
         reward = dis_reward + lambda_mode * avoid_reward
         return (reward, dis_reward, avoid_reward)
     
 
-    if mode == "attack" and lambda_mode is not None: # compute attack reward (predator)
-        # compute euclidean distances
-        dx = gen_tensor[:, :-1, :, :, 1]
-        dy = gen_tensor[:, :-1, :, :, 2]
-        dist = torch.sqrt(dx**2 + dy**2) + 1e-8
+    if mode == "attack" and lambda_mode is None:
+        # attack reward only
+        return (attack_reward)
+    
 
-        # distance to preys
-        prey_dist = dist[:, :, :, 1:]
-
-        # get nearest prey 
-        nearest_prey_dist = prey_dist.min(dim=-1).values
-
-        # compute attack reward, gets higher reward for closer distances
-        attack_reward = (-nearest_prey_dist).mean(dim=(1, 2))
-
-        # combine rewards
+    if mode == "attack" and lambda_mode is not None:
+        # compute combined rewards (lamda is indicator for combined reward)
         reward = dis_reward + lambda_mode * attack_reward
         return (reward, dis_reward, attack_reward)
 
