@@ -15,6 +15,10 @@ from torch.utils.data import TensorDataset, DataLoader, random_split
 References:
 Wu et al. (2025) - Adversarial imitation learning with deep attention network for swarm systems (https://doi.org/10.1007/s40747-024-01662-2)
 
+ES Clipping idea derived from:
+Liu et al (2019) - Trust Region Evolution Strategies ()
+
+
 ES Structure: Wu et al. (2025) - p.7 Algorithm 2
 Sinkhorn Loss: https://www.kernel-operations.io/geomloss/
 Gradient Penalty: https://towardsdatascience.com/demystified-wasserstein-gan-with-gradient-penalty-ba5e9b905ead/
@@ -74,44 +78,65 @@ def discriminator_reward(discriminator, gen_tensor, mode="mean", lambda_mode=Non
     # compute mean discriminator reward
     dis_reward = matrix.mean(dim=(1, 2))
 
-    # compute euclidean distances
-    dx = gen_tensor[:, :-1, :, :, 1]
-    dy = gen_tensor[:, :-1, :, :, 2]
-    dist = torch.sqrt(dx**2 + dy**2) + 1e-8
-
-    # avoid reward based on distance to predator
-    pred_dist = dist[:, :, :, 0]
-    avoid_reward = pred_dist.mean(dim=(1, 2))
-
-    # attack reward based on nearest prey
-    prey_dist = dist[:, :, :, 1:]
-    nearest_prey_dist = prey_dist.min(dim=-1).values
-    attack_reward = (-nearest_prey_dist).mean(dim=(1, 2))
-
-
+    # mean discriminator reward only
     if mode == "mean":
-        # mean discriminator reward
         return (dis_reward)
     
     
+    # avoid mode only
     if mode == "avoid" and lambda_mode is None:
-        # avoid reward only
+        # compute euclidean distances, in prey tensor first term is flag
+        dx = gen_tensor[..., 1]
+        dy = gen_tensor[..., 2]
+        dist = torch.sqrt(dx**2 + dy**2) + 1e-8
+
+        # avoid reward based on distance to predator
+        pred_dist = dist[:, :, :, 0]
+        avoid_reward = pred_dist.mean(dim=(1, 2))
         return (avoid_reward)
 
 
+    # avoid + discriminator reward
     if mode == "avoid" and lambda_mode is not None:
-        # compute combined rewards (lamda is indicator for combined reward)
+        # compute euclidean distances, in prey tensor first term is flag
+        dx = gen_tensor[..., 1]
+        dy = gen_tensor[..., 2]
+        dist = torch.sqrt(dx**2 + dy**2) + 1e-8
+
+        # avoid reward based on distance to predator
+        pred_dist = dist[:, :, :, 0]
+        avoid_reward = pred_dist.mean(dim=(1, 2))
+
+        # compute combined rewards
         reward = dis_reward + lambda_mode * avoid_reward
         return (reward, dis_reward, avoid_reward)
     
 
+    # attack mode only
     if mode == "attack" and lambda_mode is None:
-        # attack reward only
+        # compute euclidean distances
+        dx = gen_tensor[..., 0]
+        dy = gen_tensor[..., 1]
+        dist = torch.sqrt(dx**2 + dy**2) + 1e-8
+
+        # attack reward based on nearest prey
+        nearest_prey_dist = dist.min(dim=-1).values
+        attack_reward = (-nearest_prey_dist).mean(dim=(1, 2))
         return (attack_reward)
     
 
+    # attack + discriminator reward
     if mode == "attack" and lambda_mode is not None:
-        # compute combined rewards (lamda is indicator for combined reward)
+        # compute euclidean distances
+        dx = gen_tensor[..., 0]
+        dy = gen_tensor[..., 1]
+        dist = torch.sqrt(dx**2 + dy**2) + 1e-8
+
+        # attack reward based on nearest prey
+        nearest_prey_dist = dist.min(dim=-1).values
+        attack_reward = (-nearest_prey_dist).mean(dim=(1, 2))
+
+        # compute combined rewards
         reward = dis_reward + lambda_mode * attack_reward
         return (reward, dis_reward, attack_reward)
 
