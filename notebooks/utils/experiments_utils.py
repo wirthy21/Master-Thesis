@@ -121,6 +121,16 @@ def compute_expert_metrics(expert_data, num_agents):
             "escape_alignment": escape_alignments}
 
 
+def minmax_norm(data):
+    """
+    Applies min-max normalization (for visualization purposes)
+
+    Input: data
+    Output: normalized data range [0, 1]
+    """
+    data = np.asarray(data, dtype=np.float32)
+    min, max = np.min(data), np.max(data)
+    return (data - min) / (max - min + 1e-8)
 
 
 def plot_swarm_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=None, random_metrics=None, expert_metrics=None):
@@ -151,75 +161,61 @@ def plot_swarm_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=None, 
     expert_polarization = np.mean(expert_metrics["polarization"]) if "polarization" in expert_metrics else None
 
     # plot polarization
-    axes[0].plot(steps, gail_polarization, label="GAIL", color="#8B0000", linewidth=1) if gail_polarization else None
-    axes[0].plot(steps, bc_polarization, label="BC", color="#F08080", linewidth=1) if bc_polarization else None
-    axes[0].plot(steps, couzin_polarization, label="Couzin", color="#003366", linewidth=1) if couzin_polarization else None
-    axes[0].plot(steps, random_polarization, label="Random", color="#7EC8E3", linewidth=1) if random_polarization else None
+    axes[0].plot(steps, gail_polarization, label="GAIL", color="#8B0000", linewidth=1) if len(gail_polarization) > 0 else None
+    axes[0].plot(steps, bc_polarization, label="BC", color="#F08080", linewidth=1) if len(bc_polarization) > 0 else None
+    axes[0].plot(steps, couzin_polarization, label="Couzin", color="#003366", linewidth=1) if len(couzin_polarization) > 0 else None
+    axes[0].plot(steps, random_polarization, label="Random", color="#7EC8E3", linewidth=1) if len(random_polarization) > 0 else None
     axes[0].axhline(expert_polarization, label="Expert", color="#000000", linewidth=1) if expert_polarization is not None else None
     axes[0].set_xlabel("Steps", fontsize=14)
     axes[0].set_ylabel("Polarization", fontsize=14)
     axes[0].set_title("Polarization Over Time", fontsize=18)
+    axes[0].set_xlim(0, steps[-1])
     axes[0].set_ylim(0, 1)
     axes[0].legend()
 
     # get angular momentum data
-    gail_am = [m.get("angular_momentum") for m in gail_metrics if "angular_momentum" in m]
-    bc_am = [m.get("angular_momentum") for m in bc_metrics if "angular_momentum" in m]
-    couzin_am = [m.get("angular_momentum") for m in couzin_metrics if "angular_momentum" in m]
-    random_am = [m.get("angular_momentum") for m in random_metrics if "angular_momentum" in m]
-    expert_am = np.mean(expert_metrics["angular_momentum"]) if "angular_momentum" in expert_metrics else None
-
-    # bit ugly, but works
-    max_am = max([max(x) for x in [gail_am, bc_am, couzin_am, random_am] if x] + ([expert_am] if expert_am is not None else [])) if (gail_am or bc_am or couzin_am or random_am or expert_am is not None) else None
+    gail_am = minmax_norm([m.get("angular_momentum") for m in gail_metrics if "angular_momentum" in m]) if len(gail_metrics)>0 else []
+    bc_am = minmax_norm([m.get("angular_momentum") for m in bc_metrics if "angular_momentum" in m]) if len(bc_metrics)>0 else []
+    couzin_am = minmax_norm([m.get("angular_momentum") for m in couzin_metrics if "angular_momentum" in m]) if len(couzin_metrics)>0 else []
+    random_am = minmax_norm([m.get("angular_momentum") for m in random_metrics if "angular_momentum" in m]) if len(random_metrics)>0 else []
+    expert_am = np.mean(minmax_norm(expert_metrics["angular_momentum"])) if "angular_momentum" in expert_metrics else None
 
     # plot angular momentum
-    axes[1].plot(steps, gail_am, label="GAIL", color="#8B0000", linewidth=1) if gail_am else None
-    axes[1].plot(steps, bc_am, label="BC", color="#F08080", linewidth=1) if bc_am else None
-    axes[1].plot(steps, couzin_am, label="Couzin", color="#003366", linewidth=1) if couzin_am else None
-    axes[1].plot(steps, random_am, label="Random", color="#7EC8E3", linewidth=1) if random_am else None
+    axes[1].plot(steps, gail_am, label="GAIL", color="#8B0000", linewidth=1) if (gail_am is not None and len(gail_am) > 0) else None
+    axes[1].plot(steps, bc_am, label="BC", color="#F08080", linewidth=1) if (bc_am is not None and len(bc_am) > 0) else None
+    axes[1].plot(steps, couzin_am, label="Couzin", color="#003366", linewidth=1) if (couzin_am is not None and len(couzin_am) > 0) else None
+    axes[1].plot(steps, random_am, label="Random", color="#7EC8E3", linewidth=1) if (random_am is not None and len(random_am) > 0) else None
     axes[1].axhline(expert_am, label="Expert", color="#000000", linewidth=1) if expert_am is not None else None
     axes[1].set_xlabel("Steps", fontsize=14)
     axes[1].set_ylabel("Angular Momentum", fontsize=14)
     axes[1].set_title("Angular Momentum Over Time", fontsize=18)
-    axes[1].set_ylim(0, max_am) if max_am is not None else None
+    axes[1].set_xlim(0, steps[-1])
+    axes[1].set_ylim(0, 1)
     axes[1].legend()
 
     # get degree of sparsity data
-    gail_dos = [m.get("degree_of_sparsity") for m in gail_metrics if "degree_of_sparsity" in m]
-    bc_dos = [m.get("degree_of_sparsity") for m in bc_metrics if "degree_of_sparsity" in m]
-    couzin_dos = [m.get("degree_of_sparsity") for m in couzin_metrics if "degree_of_sparsity" in m]
-    random_dos = [m.get("degree_of_sparsity") for m in random_metrics if "degree_of_sparsity" in m]
-    expert_dos = np.mean(expert_metrics["sparsity"]) if "sparsity" in expert_metrics else None
-
-    # bit ugly, but works
-    max_dos = max([max(x) for x in [gail_dos, bc_dos, couzin_dos, random_dos] if x] + ([expert_dos] if expert_dos is not None else [])) if (gail_dos or bc_dos or couzin_dos or random_dos or expert_dos is not None) else None
+    gail_dos = minmax_norm([m.get("degree_of_sparsity") for m in gail_metrics if "degree_of_sparsity" in m]) if len(gail_metrics)>0 else []
+    bc_dos = minmax_norm([m.get("degree_of_sparsity") for m in bc_metrics if "degree_of_sparsity" in m]) if len(bc_metrics)>0 else []
+    couzin_dos = minmax_norm([m.get("degree_of_sparsity") for m in couzin_metrics if "degree_of_sparsity" in m]) if len(couzin_metrics)>0 else []
+    random_dos = minmax_norm([m.get("degree_of_sparsity") for m in random_metrics if "degree_of_sparsity" in m]) if len(random_metrics)>0 else []
+    expert_dos = np.mean(minmax_norm(expert_metrics["sparsity"])) if "sparsity" in expert_metrics else None
 
     # plot degree of sparsity
-    axes[2].plot(steps, gail_dos, label="GAIL", color="#8B0000", linewidth=1) if gail_dos else None
-    axes[2].plot(steps, bc_dos, label="BC", color="#F08080", linewidth=1) if bc_dos else None
-    axes[2].plot(steps, couzin_dos, label="Couzin", color="#003366", linewidth=1) if couzin_dos else None 
-    axes[2].plot(steps, random_dos, label="Random", color="#7EC8E3", linewidth=1) if random_dos else None 
+    axes[2].plot(steps, gail_dos, label="GAIL", color="#8B0000", linewidth=1) if len(gail_dos) > 0 else None
+    axes[2].plot(steps, bc_dos, label="BC", color="#F08080", linewidth=1) if len(bc_dos) > 0 else None
+    axes[2].plot(steps, couzin_dos, label="Couzin", color="#003366", linewidth=1) if len(couzin_dos) > 0 else None 
+    axes[2].plot(steps, random_dos, label="Random", color="#7EC8E3", linewidth=1) if len(random_dos) > 0 else None 
     axes[2].axhline(expert_dos, label="Expert", color="#000000", linewidth=1) if expert_dos is not None else None 
     axes[2].set_xlabel("Steps", fontsize=14)
     axes[2].set_ylabel("Degree of Sparsity", fontsize=14)
     axes[2].set_title("Degree of Sparsity Over Time", fontsize=18)
-    axes[2].set_ylim(0, max_dos) if max_dos is not None else None
+    axes[2].set_xlim(0, steps[-1])
+    axes[2].set_ylim(0, 1)
     axes[2].legend()
 
     plt.tight_layout()
     plt.show()
-    
 
-def minmax_norm(distance_to_predator):
-    """
-    Applies min-max normalization (for visualization purposes)
-
-    Input: distance to predator
-    Output: normalized distance to predator
-    """
-    distance_to_predator = np.asarray(distance_to_predator, dtype=np.float32)
-    min, max = np.min(distance_to_predator), np.max(distance_to_predator)
-    return (distance_to_predator - min) / (max - min + 1e-8)
 
 
 def plot_pred_prey_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=None, random_metrics=None, expert_metrics=None):
@@ -249,14 +245,14 @@ def plot_pred_prey_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=No
     random_dtp = [m.get("distance_to_predator") for m in random_metrics if "distance_to_predator" in m]
     couzin_dtp = [m.get("distance_to_predator") for m in couzin_metrics if "distance_to_predator" in m]
 
-    # normalize distance to predator data
-    gail_dtp = minmax_norm(gail_dtp) if len(gail_dtp) > 0 else []
-    bc_dtp = minmax_norm(bc_dtp) if len(bc_dtp) > 0 else []
-    random_dtp = minmax_norm(random_dtp) if len(random_dtp) > 0 else []
-    couzin_dtp = minmax_norm(couzin_dtp) if len(couzin_dtp) > 0 else []
+    # normalize distance to predator data and scale to environment size, outputs distance in pixel
+    gail_dtp = (np.asarray(gail_dtp, dtype=float) / 50.0 * 2160.0) if len(gail_dtp) > 0 else []
+    bc_dtp = (np.asarray(bc_dtp, dtype=float) / 50.0 * 2160.0) if len(bc_dtp) > 0 else []
+    random_dtp = (np.asarray(random_dtp, dtype=float) / 50.0 * 2160.0) if len(random_dtp) > 0 else []
+    couzin_dtp = (np.asarray(couzin_dtp, dtype=float) / 50.0 * 2160.0) if len(couzin_dtp) > 0 else []
 
     # mean expert distance to predator
-    expert_dtp = np.mean(expert_metrics["distance_to_predator"]) if "distance_to_predator" in expert_metrics else None
+    expert_dtp = np.mean(expert_metrics["distance_to_predator"]) * 2160 if "distance_to_predator" in expert_metrics else None
 
     # plot distance to predator
     axes[0].plot(steps, gail_dtp, label="GAIL", color="#8B0000", linewidth=1) if len(gail_dtp) > 0 else None
@@ -267,7 +263,7 @@ def plot_pred_prey_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=No
     axes[0].set_xlabel("Steps")
     axes[0].set_ylabel("Distance to Predator")
     axes[0].set_title("Distance to Predator Over Time")
-    axes[0].set_ylim(0, 1)
+    axes[0].set_ylim(0, 2160)
     axes[0].legend()
 
     # get escape alignment data
@@ -286,6 +282,7 @@ def plot_pred_prey_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=No
     axes[1].set_xlabel("Steps")
     axes[1].set_ylabel("Escape Alignment")
     axes[1].set_title("Escape Alignment Over Time")
+    axes[1].set_xlim(0, steps[-1])
     axes[1].set_ylim(-1, 1)
     axes[1].legend()
 
