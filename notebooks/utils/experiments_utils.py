@@ -327,7 +327,7 @@ def plot_pred_prey_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=No
 ##########################
 
 
-def compute_pin_an_maps(pin, an, grid_size=100, n_orient=100, role="prey"):
+def compute_pin_an_maps(pin, an, grid_size=100, n_orient=100, role="prey_pred"):
     """
     Computes policy and attention maps for PIN and AN models
 
@@ -361,6 +361,11 @@ def compute_pin_an_maps(pin, an, grid_size=100, n_orient=100, role="prey"):
             if role == "prey":
                 # to handle flag feature for prey
                 flag = torch.zeros((n_orient, 1), device="cpu")
+                inputs = torch.cat([flag, dx, dy, rel_vx.unsqueeze(1), rel_vy.unsqueeze(1)], dim=1)
+
+            if role == "prey_pred": # for prey-pred one-to-one relationship
+                # to handle flag feature for prey
+                flag = torch.ones((n_orient, 1), device="cpu")
                 inputs = torch.cat([flag, dx, dy, rel_vx.unsqueeze(1), rel_vy.unsqueeze(1)], dim=1)
 
             # PIN forward, tanh for better visualization
