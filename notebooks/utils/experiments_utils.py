@@ -77,6 +77,7 @@ def compute_expert_metrics(expert_data, num_agents):
     angular_momenta = []
     sparsities = []
     distances_to_predator = []
+    distance_nearest_prey = []
     escape_alignments = []
 
     # compute data ranges for normalization
@@ -112,16 +113,18 @@ def compute_expert_metrics(expert_data, num_agents):
             angular_momenta.append(compute_angular_momentum(x_t, y_t, vx_t, vy_t))
             sparsities.append(degree_of_sparsity(x_t, y_t))
             distances_to_predator.append(distance_to_predator(x_t, y_t))
+            distance_nearest_prey.append(pred_distance_to_nearest_prey(x_t, y_t))
             escape_alignments.append(escape_alignment(x_t, y_t, vx_t, vy_t))
 
     return {"polarization": polarizations,
             "angular_momentum": angular_momenta,
             "sparsity": sparsities,
             "distance_to_predator": distances_to_predator,
+            "distance_nearest_prey": distance_nearest_prey,
             "escape_alignment": escape_alignments}
 
 
-def minmax_norm(data):
+def minmax_norm(data, min=None, max=None):
     """
     Applies min-max normalization (for visualization purposes)
 
@@ -129,7 +132,8 @@ def minmax_norm(data):
     Output: normalized data range [0, 1]
     """
     data = np.asarray(data, dtype=np.float32)
-    min, max = np.min(data), np.max(data)
+    if min is None or max is None:
+        min, max = data.min(), data.max()
     return (data - min) / (max - min + 1e-8)
 
 
@@ -174,11 +178,11 @@ def plot_swarm_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=None, 
     axes[0].legend()
 
     # get angular momentum data
-    gail_am = minmax_norm([m.get("angular_momentum") for m in gail_metrics if "angular_momentum" in m]) if len(gail_metrics)>0 else []
-    bc_am = minmax_norm([m.get("angular_momentum") for m in bc_metrics if "angular_momentum" in m]) if len(bc_metrics)>0 else []
-    couzin_am = minmax_norm([m.get("angular_momentum") for m in couzin_metrics if "angular_momentum" in m]) if len(couzin_metrics)>0 else []
-    random_am = minmax_norm([m.get("angular_momentum") for m in random_metrics if "angular_momentum" in m]) if len(random_metrics)>0 else []
-    expert_am = np.mean(minmax_norm(expert_metrics["angular_momentum"])) if "angular_momentum" in expert_metrics else None
+    gail_am = [m.get("angular_momentum") for m in gail_metrics if "angular_momentum" in m] if len(gail_metrics)>0 else []
+    bc_am = [m.get("angular_momentum") for m in bc_metrics if "angular_momentum" in m] if len(bc_metrics)>0 else []
+    couzin_am = [m.get("angular_momentum") for m in couzin_metrics if "angular_momentum" in m] if len(couzin_metrics)>0 else []
+    random_am = [m.get("angular_momentum") for m in random_metrics if "angular_momentum" in m] if len(random_metrics)>0 else []
+    expert_am = np.mean(expert_metrics["angular_momentum"]) * 2160 if "angular_momentum" in expert_metrics else None
 
     # plot angular momentum
     axes[1].plot(steps, gail_am, label="GAIL", color="#8B0000", linewidth=1) if (gail_am is not None and len(gail_am) > 0) else None
@@ -190,15 +194,14 @@ def plot_swarm_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=None, 
     axes[1].set_ylabel("Angular Momentum", fontsize=14)
     axes[1].set_title("Angular Momentum Over Time", fontsize=18)
     axes[1].set_xlim(0, steps[-1])
-    axes[1].set_ylim(0, 1)
     axes[1].legend()
 
     # get degree of sparsity data
-    gail_dos = minmax_norm([m.get("degree_of_sparsity") for m in gail_metrics if "degree_of_sparsity" in m]) if len(gail_metrics)>0 else []
-    bc_dos = minmax_norm([m.get("degree_of_sparsity") for m in bc_metrics if "degree_of_sparsity" in m]) if len(bc_metrics)>0 else []
-    couzin_dos = minmax_norm([m.get("degree_of_sparsity") for m in couzin_metrics if "degree_of_sparsity" in m]) if len(couzin_metrics)>0 else []
-    random_dos = minmax_norm([m.get("degree_of_sparsity") for m in random_metrics if "degree_of_sparsity" in m]) if len(random_metrics)>0 else []
-    expert_dos = np.mean(minmax_norm(expert_metrics["sparsity"])) if "sparsity" in expert_metrics else None
+    gail_dos = [m.get("degree_of_sparsity") for m in gail_metrics if "degree_of_sparsity" in m] if len(gail_metrics)>0 else []
+    bc_dos = [m.get("degree_of_sparsity") for m in bc_metrics if "degree_of_sparsity" in m] if len(bc_metrics)>0 else []
+    couzin_dos = [m.get("degree_of_sparsity") for m in couzin_metrics if "degree_of_sparsity" in m] if len(couzin_metrics)>0 else []
+    random_dos = [m.get("degree_of_sparsity") for m in random_metrics if "degree_of_sparsity" in m] if len(random_metrics)>0 else []
+    expert_dos = np.mean(expert_metrics["sparsity"]) * 2160 if "sparsity" in expert_metrics else None
 
     # plot degree of sparsity
     axes[2].plot(steps, gail_dos, label="GAIL", color="#8B0000", linewidth=1) if len(gail_dos) > 0 else None
@@ -210,12 +213,12 @@ def plot_swarm_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=None, 
     axes[2].set_ylabel("Degree of Sparsity", fontsize=14)
     axes[2].set_title("Degree of Sparsity Over Time", fontsize=18)
     axes[2].set_xlim(0, steps[-1])
-    axes[2].set_ylim(0, 1)
     axes[2].legend()
 
     plt.tight_layout()
     plt.show()
 
+    return (expert_polarization, expert_am, expert_dos)
 
 
 def plot_pred_prey_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=None, random_metrics=None, expert_metrics=None):
@@ -237,21 +240,13 @@ def plot_pred_prey_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=No
     random_metrics = random_metrics[0] if random_metrics is not None else []
     expert_metrics = expert_metrics if expert_metrics is not None else {}
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+    fig, axes = plt.subplots(1, 3, figsize=(18, 4))
 
     # get distance to predator data
-    gail_dtp = [m.get("distance_to_predator") for m in gail_metrics if "distance_to_predator" in m]
+    gail_dtp = [m.get("distance_to_predator") for m in gail_metrics if "distance_to_predator" in m] 
     bc_dtp = [m.get("distance_to_predator") for m in bc_metrics if "distance_to_predator" in m]
     random_dtp = [m.get("distance_to_predator") for m in random_metrics if "distance_to_predator" in m]
     couzin_dtp = [m.get("distance_to_predator") for m in couzin_metrics if "distance_to_predator" in m]
-
-    # normalize distance to predator data and scale to environment size, outputs distance in pixel
-    gail_dtp = (np.asarray(gail_dtp, dtype=float) / 50.0 * 2160.0) if len(gail_dtp) > 0 else []
-    bc_dtp = (np.asarray(bc_dtp, dtype=float) / 50.0 * 2160.0) if len(bc_dtp) > 0 else []
-    random_dtp = (np.asarray(random_dtp, dtype=float) / 50.0 * 2160.0) if len(random_dtp) > 0 else []
-    couzin_dtp = (np.asarray(couzin_dtp, dtype=float) / 50.0 * 2160.0) if len(couzin_dtp) > 0 else []
-
-    # mean expert distance to predator
     expert_dtp = np.mean(expert_metrics["distance_to_predator"]) * 2160 if "distance_to_predator" in expert_metrics else None
 
     # plot distance to predator
@@ -266,6 +261,28 @@ def plot_pred_prey_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=No
     axes[0].set_ylim(0, 2160)
     axes[0].legend()
 
+
+    # get nearest prey distance data
+    gail_pnd = [m.get("distance_nearest_prey") for m in gail_metrics if "distance_nearest_prey" in m]
+    bc_pnd = [m.get("distance_nearest_prey") for m in bc_metrics   if "distance_nearest_prey" in m]
+    couzin_pnd = [m.get("distance_nearest_prey") for m in couzin_metrics if "distance_nearest_prey" in m]
+    random_pnd = [m.get("distance_nearest_prey") for m in random_metrics if "distance_nearest_prey" in m]
+    expert_pnd = np.mean(np.asarray(expert_metrics["distance_nearest_prey"], dtype=float) * 2160) if "distance_nearest_prey" in expert_metrics else None
+
+    # plot nearest prey distance
+    axes[1].plot(steps, gail_pnd, label="GAIL", color="#8B0000", linewidth=1) if len(gail_pnd) > 0 else None
+    axes[1].plot(steps, bc_pnd, label="BC", color="#F08080", linewidth=1) if len(bc_pnd) > 0 else None
+    axes[1].plot(steps, couzin_pnd, label="Couzin", color="#003366", linewidth=1) if len(couzin_pnd) > 0 else None
+    axes[1].plot(steps, random_pnd, label="Random", color="#7EC8E3", linewidth=1) if len(random_pnd) > 0 else None
+    axes[1].axhline(expert_pnd, label="Expert", color="#000000", linewidth=1) if expert_pnd is not None else None
+    axes[1].set_xlabel("Steps")
+    axes[1].set_ylabel("Nearest Prey Distance")
+    axes[1].set_title("Predator Distance to Nearest Prey")
+    axes[1].set_xlim(0, steps[-1])
+    axes[1].set_ylim(0, 2160)
+    axes[1].legend()
+
+
     # get escape alignment data
     gail_ea = [m.get("escape_alignment") for m in gail_metrics if "escape_alignment" in m]
     bc_ea = [m.get("escape_alignment") for m in bc_metrics if "escape_alignment" in m]
@@ -274,20 +291,22 @@ def plot_pred_prey_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=No
     expert_ea = np.mean(expert_metrics["escape_alignment"]) if "escape_alignment" in expert_metrics else None
 
     # plot escape alignment
-    axes[1].plot(steps, gail_ea, label="GAIL", color="#8B0000", linewidth=1) if len(gail_ea) > 0 else None
-    axes[1].plot(steps, bc_ea, label="BC", color="#F08080", linewidth=1) if len(bc_ea) > 0 else None
-    axes[1].plot(steps, couzin_ea, label="Couzin", color="#003366", linewidth=1) if len(couzin_ea) > 0 else None
-    axes[1].plot(steps, random_ea, label="Random", color="#7EC8E3", linewidth=1) if len(random_ea) > 0 else None
-    axes[1].axhline(expert_ea, label="Expert", color="#000000", linewidth=1) if expert_ea is not None else None
-    axes[1].set_xlabel("Steps")
-    axes[1].set_ylabel("Escape Alignment")
-    axes[1].set_title("Escape Alignment Over Time")
-    axes[1].set_xlim(0, steps[-1])
-    axes[1].set_ylim(-1, 1)
-    axes[1].legend()
+    axes[2].plot(steps, gail_ea, label="GAIL", color="#8B0000", linewidth=1) if len(gail_ea) > 0 else None
+    axes[2].plot(steps, bc_ea, label="BC", color="#F08080", linewidth=1) if len(bc_ea) > 0 else None
+    axes[2].plot(steps, couzin_ea, label="Couzin", color="#003366", linewidth=1) if len(couzin_ea) > 0 else None
+    axes[2].plot(steps, random_ea, label="Random", color="#7EC8E3", linewidth=1) if len(random_ea) > 0 else None
+    axes[2].axhline(expert_ea, label="Expert", color="#000000", linewidth=1) if expert_ea is not None else None
+    axes[2].set_xlabel("Steps")
+    axes[2].set_ylabel("Escape Alignment")
+    axes[2].set_title("Escape Alignment Over Time")
+    axes[2].set_xlim(0, steps[-1])
+    axes[2].set_ylim(-1, 1)
+    axes[2].legend()
 
     plt.tight_layout()
     plt.show()
+
+    return (expert_dtp, expert_pnd, expert_ea)
 
 
 
@@ -342,7 +361,10 @@ def compute_pin_an_maps(pin, an, grid_size=100, n_orient=100, role="prey"):
             w_logits = w_logits[0].squeeze()
             attn_map[iy, ix] = w_logits.mean().item()
 
-    return xs, ys, action_map, attn_map
+            # scale attention weights to [0, 1]
+            attention_map = minmax_norm(attn_map)
+
+    return xs, ys, action_map, attention_map
 
 
 
@@ -513,9 +535,9 @@ def trajectory_offsets(pred_policy, prey_policy, init_pool, mc_samples=50, clip_
     position_error_agents = position_error.mean(axis=2) 
     theta_error_agents = theta_error.mean(axis=2)       
 
-    # mean/std over MC samples
-    position_mean = position_error_agents.mean(axis=0)   
-    position_std  = position_error_agents.std(axis=0)   
+    # mean/std over MC samples, scale to 2160 pixels
+    position_mean = position_error_agents.mean(axis=0) * 2160
+    position_std  = position_error_agents.std(axis=0) * 2160
     theta_mean = theta_error_agents.mean(axis=0)        
     theta_std  = theta_error_agents.std(axis=0)        
 
@@ -536,7 +558,7 @@ def trajectory_offsets(pred_policy, prey_policy, init_pool, mc_samples=50, clip_
     ax1.set_xlim(0, time[-1])
     ax1.set_ylim(0)
     ax1.set_xlabel("timestep")
-    ax1.set_ylabel("mean position error")
+    ax1.set_ylabel("mean position error (in pixels)")
     ax1.set_title(f"[{role.upper()}] Position error over time")
 
     # theta error plot
@@ -547,7 +569,7 @@ def trajectory_offsets(pred_policy, prey_policy, init_pool, mc_samples=50, clip_
     ax2.set_xlim(0, time[-1])
     ax2.set_ylim(0)
     ax2.set_xlabel("timestep")
-    ax2.set_ylabel("mean theta error")
+    ax2.set_ylabel("mean theta error (in degrees)")
     ax2.set_title(f"[{role.upper()}] Theta error over time")
 
     plt.tight_layout()
@@ -603,9 +625,9 @@ def trajectory_plot(ax, agent_idx, role, positions, scale=5):
 
     # draw generated trajectories in grey
     for r in rollouts:
-        # get x, y, theta for this agent
-        x = np.asarray(gen_xs[r, :, agent_idx], dtype=np.float32)
-        y = np.asarray(gen_ys[r, :, agent_idx], dtype=np.float32)
+        # get x, y, theta for this agent, scale to environment size
+        x = np.asarray(gen_xs[r, :, agent_idx], dtype=np.float32) * 2160
+        y = np.asarray(gen_ys[r, :, agent_idx], dtype=np.float32) * 2160
         theta = float(gen_thetas[r, 0, agent_idx])
 
         # align trajectory
@@ -616,9 +638,9 @@ def trajectory_plot(ax, agent_idx, role, positions, scale=5):
         # plot generated trajectories
         ax.plot(x_rotated, y_rotated, color="0.55", linewidth=0.9, alpha=0.25, zorder=1)
 
-    # draw expert trajectory in red
-    exp_x = np.asarray(exp_xs[:, agent_idx], dtype=np.float32) * scale
-    exp_y = np.asarray(exp_ys[:, agent_idx], dtype=np.float32) * scale
+    # draw expert trajectory in red, scale is necessary to fix step size differences
+    exp_x = np.asarray(exp_xs[:, agent_idx], dtype=np.float32) * scale * 2160
+    exp_y = np.asarray(exp_ys[:, agent_idx], dtype=np.float32) * scale * 2160
     exp_theta = float(exp_thetas[0, agent_idx])
 
     # align expert trajectory
@@ -632,8 +654,8 @@ def trajectory_plot(ax, agent_idx, role, positions, scale=5):
     # set startpoint
     ax.scatter([0.0], [0.0], s=20, color="black", zorder=12)
     ax.set_title(role.upper())
-    ax.set_xlabel("x")
-    ax.set_ylabel("y")
+    ax.set_xlabel("x (in pixels)")
+    ax.set_ylabel("y (in pixels)")
     ax.set_aspect("auto")
 
     # widen x-limits and y-limits based on data
@@ -689,19 +711,32 @@ def compute_incoming_weights(frame_metrics):
         for nbr_k, neighbor_id in enumerate(prey_neighbors[focal_k]):
             incoming[neighbor_id] += float(weights_prey[focal_k, nbr_k])
 
-    # scale prey incoming weights to [0.2, 1.0] for better visualization, if 0 fish invisible
-    prey_incoming = incoming[1:]
-    incoming_min = prey_incoming.min()
-    incoming_max = prey_incoming.max()
-    incoming_scaled = 0.2 + (prey_incoming - incoming_min) / (incoming_max - incoming_min) * (1.0 - 0.2) # scale to alpha range for transparency
-    incoming = np.insert(incoming_scaled, 0, incoming[0])
-
     # build incoming weights dictionary
     incoming_dict = {f"predator_{pred_self}": 0.999} # predator always visible
     for i in prey_self:
         incoming_dict[f"prey_{i}"] = incoming[i]
 
-    return incoming_dict
+    # normalize incoming weights with power renormalization, necessary due to weight imbalance
+    keys = list(incoming_dict.keys())
+    weights = np.array([float(incoming_dict[k]) for k in keys], dtype=np.float64)
+    clipped_weights = np.clip(weights, 0.0, None)
+
+    # power renormalization with exponent 0.001
+    powered = (clipped_weights + 1e-12) ** 0.001
+    powered_weights = powered / (powered.sum() + 1e-12)
+
+    # scale prey incoming weights to [0.2, 1.0] for better visualization, if 0 fish invisible
+    prey_incoming = powered_weights[1:]
+    incoming_min = prey_incoming.min()
+    incoming_max = prey_incoming.max()
+    incoming_scaled = 0.2 + (prey_incoming - incoming_min) / (incoming_max - incoming_min) * (1.0 - 0.2) # scale to alpha range for transparency
+
+    # build final incoming weights dictionary
+    final_dict = {f"predator_{pred_self}": 0.999}
+    for idx, i in enumerate(prey_self):
+        final_dict[f"prey_{i}"] = float(incoming_scaled[idx])
+
+    return final_dict
 
 
 def draw_attention_graph(metrics_weights, frame_idx=1, pred_img_path=None, prey_img_path=None):
@@ -780,7 +815,7 @@ def draw_attention_graph(metrics_weights, frame_idx=1, pred_img_path=None, prey_
         ann_box = AnnotationBbox(imgbox, (xs_centered[i], ys_centered[i]), frameon=False, xycoords='data', zorder=2)
         ax.add_artist(ann_box)
 
-    ax.set_title(f"Attention Graph (Frame {frame_idx})")
+    ax.set_title(f"Attention Graph")
     ax.set_facecolor("#ACCEE7") # blue from marl_aquarium
     ax.set_xlim(-max_range, max_range)
     ax.set_ylim(-max_range, max_range)
@@ -832,14 +867,8 @@ def draw_predator_attention_graph(metrics_weights, frame_idx=1, pred_img_path=No
     pred_image = Image.open(pred_img_path).convert("RGBA")
     prey_image = Image.open(prey_img_path).convert("RGBA")
 
-    # extract predator's outgoing weights for transparency
-    pred_weights = weights["weights"][0]
-    pred_weights = pred_weights[0, :, 0]
-
-    # scale weights to [0.2, 1.0] for better visualization
-    weight_min = pred_weights.min()
-    weight_max = pred_weights.max()
-    weights_arr = 0.2 + (pred_weights - weight_min) / (weight_max - weight_min) * (1.0 - 0.2) # Scale to alpha range for transparency
+    # compute incoming weights for transparency
+    alphas = compute_incoming_weights(weights)
 
     for i in range(n_agents):
         # compute rotation angle in degrees
@@ -848,20 +877,20 @@ def draw_predator_attention_graph(metrics_weights, frame_idx=1, pred_img_path=No
         # select base image
         base_img = pred_image if i == 0 else prey_image
 
-        # get alpha value
-        alpha = 0.999 if i == 0 else weights_arr[i-1]
+        # get alpha value from incoming-weight dict
+        alpha = alphas[f"predator_0"] if i == 0 else alphas[f"prey_{i}"]
 
         # rotate image to match direction
         rotated_img = base_img.rotate(angle_deg+180, resample=Image.BICUBIC, expand=True)
         rotated_img = np.asarray(rotated_img).copy()
 
-        if alpha == 1.0:
-                # mark leader prey
-                rotated_img = rotated_img.astype(float)
-                rotated_img[..., 0] *= 0.6
-                rotated_img[..., 1] *= 0.6
-                rotated_img[..., 2] *= 1.6
-                rotated_img = np.clip(rotated_img, 0, 255).astype(np.uint8)
+        # mark leader prey (use threshold instead of == 1.0)
+        if i != 0 and alpha >= 0.999:
+            rotated_img = rotated_img.astype(float)
+            rotated_img[..., 0] *= 1.8
+            rotated_img[..., 1] *= 0.6
+            rotated_img[..., 2] *= 0.6
+            rotated_img = np.clip(rotated_img, 0, 255).astype(np.uint8)
 
         # apply transparency
         rotated_img[:, :, 3] = (rotated_img[:, :, 3].astype(float) * alpha).astype(np.uint8)
@@ -872,8 +901,8 @@ def draw_predator_attention_graph(metrics_weights, frame_idx=1, pred_img_path=No
         ann_box = AnnotationBbox(imgbox, (xs_centered[i], ys_centered[i]), frameon=False, xycoords='data', zorder=2)
         ax.add_artist(ann_box)
 
-    ax.set_title(f"Predator Attention Graph (Frame {frame_idx})")
-    ax.set_facecolor("#ACCEE7") # blue from marl_aquarium
+    ax.set_title(f"Predator Attention Graph")
+    ax.set_facecolor("#ACCEE7")
     ax.set_xlim(-max_range, max_range)
     ax.set_ylim(-max_range, max_range)
 
@@ -966,7 +995,7 @@ def record_attn_graph_video(metrics_weights, num_steps=50, pred_img_path=None, p
             rotated_img = base_img.rotate(angle_deg+180, resample=Image.BICUBIC, expand=True)
             rotated_img = np.asarray(rotated_img).copy()
 
-            if alpha >= 0.999:
+            if i > 0 and alpha >= 0.999:
                 # mark leader prey
                 rotated_img = rotated_img.astype(float)
                 rotated_img[..., 0] *= 1.8

@@ -3,6 +3,7 @@ import torch
 import numpy as np
 from math import *
 from numpy.linalg import *
+from utils.eval_utils import *
 import matplotlib.pyplot as plt
 from utils.eval_utils import compute_polarization, compute_angular_momentum, degree_of_sparsity, distance_to_predator, escape_alignment
 
@@ -441,6 +442,7 @@ def get_state_tensors(prey_log_step, shark_log_step,
     angular_momentum_val = compute_angular_momentum(xs, ys, vxs, vys)
     sparsity = degree_of_sparsity(xs, ys)
     dist_pred = distance_to_predator(xs, ys)
+    dist_nearest_prey = pred_distance_to_nearest_prey(xs, ys)
     escape_align = escape_alignment(xs, ys, vxs, vys)
 
     # store metrics
@@ -448,6 +450,7 @@ def get_state_tensors(prey_log_step, shark_log_step,
                "angular_momentum": angular_momentum_val,
                "degree_of_sparsity": sparsity,
                "distance_to_predator": dist_pred,
+               "distance_nearest_prey": dist_nearest_prey,
                "escape_alignment": escape_align,
                "xs": xs_scaled,
                "ys": ys_scaled,

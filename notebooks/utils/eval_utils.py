@@ -347,6 +347,23 @@ def distance_to_predator(xs, ys):
     return float(np.linalg.norm(center - predator_pos))
 
 
+def pred_distance_to_nearest_prey(xs, ys):
+    """
+    Computes predator distance to nearest prey
+
+    Input: x and y coordinates
+    Output: nearest prey distance to predator
+    """
+
+    # extract predator and prey positions
+    pred_pos = np.array([xs[0], ys[0]], dtype=np.float32)
+    prey_pos = np.stack([xs[1:], ys[1:]], axis=1).astype(np.float32)
+
+    # compute distances
+    dists = np.linalg.norm(prey_pos - pred_pos[None, :], axis=1)
+    return float(np.min(dists))
+
+
 def escape_alignment(xs, ys, vxs, vys):
     """
     Computes the escape alignment
