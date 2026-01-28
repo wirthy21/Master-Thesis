@@ -163,6 +163,7 @@ def plot_swarm_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=None, 
     couzin_polarization = [m.get("polarization") for m in couzin_metrics if "polarization" in m]
     random_polarization = [m.get("polarization") for m in random_metrics if "polarization" in m]
     expert_polarization = np.mean(expert_metrics["polarization"]) if "polarization" in expert_metrics else None
+    expert_polarization_std = np.std(expert_metrics["polarization"]) if "polarization" in expert_metrics else None
 
     # plot polarization
     axes[0].plot(steps, gail_polarization, label="GAIL", color="#8B0000", linewidth=1) if len(gail_polarization) > 0 else None
@@ -170,6 +171,7 @@ def plot_swarm_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=None, 
     axes[0].plot(steps, couzin_polarization, label="Couzin", color="#003366", linewidth=1) if len(couzin_polarization) > 0 else None
     axes[0].plot(steps, random_polarization, label="Random", color="#7EC8E3", linewidth=1) if len(random_polarization) > 0 else None
     axes[0].axhline(expert_polarization, label="Expert", color="#000000", linewidth=1) if expert_polarization is not None else None
+    axes[0].axhspan(expert_polarization - expert_polarization_std, expert_polarization + expert_polarization_std, color="#5E5A5A", alpha=0.12, linewidth=0) if (expert_polarization is not None and expert_polarization_std is not None) else None
     axes[0].set_xlabel("Steps", fontsize=14)
     axes[0].set_ylabel("Polarization", fontsize=14)
     axes[0].set_title("Polarization Over Time", fontsize=18)
@@ -183,6 +185,7 @@ def plot_swarm_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=None, 
     couzin_am = [m.get("angular_momentum") for m in couzin_metrics if "angular_momentum" in m] if len(couzin_metrics)>0 else []
     random_am = [m.get("angular_momentum") for m in random_metrics if "angular_momentum" in m] if len(random_metrics)>0 else []
     expert_am = np.mean(expert_metrics["angular_momentum"]) * 2160 if "angular_momentum" in expert_metrics else None
+    expert_am_std = np.std(expert_metrics["angular_momentum"]) * 2160 if "angular_momentum" in expert_metrics else None
 
     # plot angular momentum
     axes[1].plot(steps, gail_am, label="GAIL", color="#8B0000", linewidth=1) if (gail_am is not None and len(gail_am) > 0) else None
@@ -190,6 +193,7 @@ def plot_swarm_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=None, 
     axes[1].plot(steps, couzin_am, label="Couzin", color="#003366", linewidth=1) if (couzin_am is not None and len(couzin_am) > 0) else None
     axes[1].plot(steps, random_am, label="Random", color="#7EC8E3", linewidth=1) if (random_am is not None and len(random_am) > 0) else None
     axes[1].axhline(expert_am, label="Expert", color="#000000", linewidth=1) if expert_am is not None else None
+    axes[1].axhspan(expert_am - expert_am_std, expert_am + expert_am_std, color="#5E5A5A", alpha=0.12, linewidth=0) if (expert_am is not None and expert_am_std is not None) else None
     axes[1].set_xlabel("Steps", fontsize=14)
     axes[1].set_ylabel("Angular Momentum", fontsize=14)
     axes[1].set_title("Angular Momentum Over Time", fontsize=18)
@@ -202,6 +206,7 @@ def plot_swarm_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=None, 
     couzin_dos = [m.get("degree_of_sparsity") for m in couzin_metrics if "degree_of_sparsity" in m] if len(couzin_metrics)>0 else []
     random_dos = [m.get("degree_of_sparsity") for m in random_metrics if "degree_of_sparsity" in m] if len(random_metrics)>0 else []
     expert_dos = np.mean(expert_metrics["sparsity"]) * 2160 if "sparsity" in expert_metrics else None
+    expert_dos_std = np.std(expert_metrics["sparsity"]) * 2160 if "sparsity" in expert_metrics else None
 
     # plot degree of sparsity
     axes[2].plot(steps, gail_dos, label="GAIL", color="#8B0000", linewidth=1) if len(gail_dos) > 0 else None
@@ -209,6 +214,7 @@ def plot_swarm_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=None, 
     axes[2].plot(steps, couzin_dos, label="Couzin", color="#003366", linewidth=1) if len(couzin_dos) > 0 else None 
     axes[2].plot(steps, random_dos, label="Random", color="#7EC8E3", linewidth=1) if len(random_dos) > 0 else None 
     axes[2].axhline(expert_dos, label="Expert", color="#000000", linewidth=1) if expert_dos is not None else None 
+    axes[2].axhspan(expert_dos - expert_dos_std, expert_dos + expert_dos_std, color="#5E5A5A", alpha=0.12, linewidth=0) if (expert_dos is not None and expert_dos_std is not None) else None
     axes[2].set_xlabel("Steps", fontsize=14)
     axes[2].set_ylabel("Degree of Sparsity", fontsize=14)
     axes[2].set_title("Degree of Sparsity Over Time", fontsize=18)
@@ -248,6 +254,7 @@ def plot_pred_prey_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=No
     random_dtp = [m.get("distance_to_predator") for m in random_metrics if "distance_to_predator" in m]
     couzin_dtp = [m.get("distance_to_predator") for m in couzin_metrics if "distance_to_predator" in m]
     expert_dtp = np.mean(expert_metrics["distance_to_predator"]) * 2160 if "distance_to_predator" in expert_metrics else None
+    expert_dtp_std = np.std(expert_metrics["distance_to_predator"]) * 2160 if "distance_to_predator" in expert_metrics else None
 
     # plot distance to predator
     axes[0].plot(steps, gail_dtp, label="GAIL", color="#8B0000", linewidth=1) if len(gail_dtp) > 0 else None
@@ -255,6 +262,7 @@ def plot_pred_prey_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=No
     axes[0].plot(steps, couzin_dtp, label="Couzin", color="#003366", linewidth=1) if len(couzin_dtp) > 0 else None
     axes[0].plot(steps, random_dtp, label="Random", color="#7EC8E3", linewidth=1) if len(random_dtp) > 0 else None
     axes[0].axhline(expert_dtp, label="Expert", color="#000000", linewidth=1) if expert_dtp is not None else None
+    axes[0].axhspan(expert_dtp - expert_dtp_std, expert_dtp + expert_dtp_std, color="#5E5A5A", alpha=0.12, linewidth=0) if (expert_dtp is not None and expert_dtp_std is not None) else None
     axes[0].set_xlabel("Steps")
     axes[0].set_ylabel("Distance to Predator")
     axes[0].set_title("Distance to Predator Over Time")
@@ -268,6 +276,7 @@ def plot_pred_prey_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=No
     couzin_pnd = [m.get("distance_nearest_prey") for m in couzin_metrics if "distance_nearest_prey" in m]
     random_pnd = [m.get("distance_nearest_prey") for m in random_metrics if "distance_nearest_prey" in m]
     expert_pnd = np.mean(np.asarray(expert_metrics["distance_nearest_prey"], dtype=float) * 2160) if "distance_nearest_prey" in expert_metrics else None
+    expert_pnd_std = np.std(np.asarray(expert_metrics["distance_nearest_prey"], dtype=float) * 2160) if "distance_nearest_prey" in expert_metrics else None
 
     # plot nearest prey distance
     axes[1].plot(steps, gail_pnd, label="GAIL", color="#8B0000", linewidth=1) if len(gail_pnd) > 0 else None
@@ -275,6 +284,7 @@ def plot_pred_prey_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=No
     axes[1].plot(steps, couzin_pnd, label="Couzin", color="#003366", linewidth=1) if len(couzin_pnd) > 0 else None
     axes[1].plot(steps, random_pnd, label="Random", color="#7EC8E3", linewidth=1) if len(random_pnd) > 0 else None
     axes[1].axhline(expert_pnd, label="Expert", color="#000000", linewidth=1) if expert_pnd is not None else None
+    axes[1].axhspan(expert_pnd - expert_pnd_std, expert_pnd + expert_pnd_std, color="#5E5A5A", alpha=0.12, linewidth=0) if (expert_pnd is not None and expert_pnd_std is not None) else None
     axes[1].set_xlabel("Steps")
     axes[1].set_ylabel("Nearest Prey Distance")
     axes[1].set_title("Predator Distance to Nearest Prey")
@@ -289,6 +299,7 @@ def plot_pred_prey_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=No
     couzin_ea = [m.get("escape_alignment") for m in couzin_metrics if "escape_alignment" in m]
     random_ea = [m.get("escape_alignment") for m in random_metrics if "escape_alignment" in m]
     expert_ea = np.mean(expert_metrics["escape_alignment"]) if "escape_alignment" in expert_metrics else None
+    expert_ea_std = np.std(expert_metrics["escape_alignment"]) if "escape_alignment" in expert_metrics else None
 
     # plot escape alignment
     axes[2].plot(steps, gail_ea, label="GAIL", color="#8B0000", linewidth=1) if len(gail_ea) > 0 else None
@@ -296,6 +307,7 @@ def plot_pred_prey_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=No
     axes[2].plot(steps, couzin_ea, label="Couzin", color="#003366", linewidth=1) if len(couzin_ea) > 0 else None
     axes[2].plot(steps, random_ea, label="Random", color="#7EC8E3", linewidth=1) if len(random_ea) > 0 else None
     axes[2].axhline(expert_ea, label="Expert", color="#000000", linewidth=1) if expert_ea is not None else None
+    axes[2].axhspan(expert_ea - expert_ea_std, expert_ea + expert_ea_std, color="#5E5A5A", alpha=0.12, linewidth=0) if (expert_ea is not None and expert_ea_std is not None) else None
     axes[2].set_xlabel("Steps")
     axes[2].set_ylabel("Escape Alignment")
     axes[2].set_title("Escape Alignment Over Time")
