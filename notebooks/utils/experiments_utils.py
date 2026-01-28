@@ -224,7 +224,7 @@ def plot_swarm_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=None, 
     plt.tight_layout()
     plt.show()
 
-    return (expert_polarization, expert_am, expert_dos)
+    return (expert_polarization, expert_polarization_std, expert_am, expert_am_std, expert_dos, expert_dos_std)
 
 
 def plot_pred_prey_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=None, random_metrics=None, expert_metrics=None):
@@ -318,7 +318,7 @@ def plot_pred_prey_metrics(gail_metrics=None, bc_metrics=None, couzin_metrics=No
     plt.tight_layout()
     plt.show()
 
-    return (expert_dtp, expert_pnd, expert_ea)
+    return (expert_dtp, expert_dtp_std, expert_pnd, expert_pnd_std, expert_ea, expert_ea_std)
 
 
 
