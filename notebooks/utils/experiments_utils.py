@@ -555,8 +555,8 @@ def trajectory_offsets(pred_policy, prey_policy, init_pool, mc_samples=50, clip_
     # mean/std over MC samples, scale to 2160 pixels
     position_mean = position_error_agents.mean(axis=0) * 2160
     position_std  = position_error_agents.std(axis=0) * 2160
-    theta_mean = theta_error_agents.mean(axis=0)        
-    theta_std  = theta_error_agents.std(axis=0)        
+    theta_mean = theta_error_agents.mean(axis=0) 
+    theta_std  = theta_error_agents.std(axis=0) 
 
     # print results per step
     for step in range(position_mean.shape[0]):
