@@ -1,0 +1,36 @@
+# Expert Data Generation
+max_steps = 500         # steps per episode
+
+# Training Setup
+num_generations = 3000  # training generations
+gamma = 0.999           # decay factor
+pretrain=False          # BC pretrain
+performance_eval = 5    # evaluate performance every n generations
+num_perturbations = 64  # perturbations for ES
+
+# Policy
+lr_policy = 5e-4        # learning rate policy
+sigma = 0.1             # scatter for ES (exploration)
+
+# Discriminator
+dis_balance_factor = 2  # discriminator steps per policy step
+noise = 0.005           # discriminator input noise
+lr_disc = 5e-4          # learning rate discriminator
+lambda_gp = 5           # gradient penalty factor
+prey_update_mode = {"mode": "mean", "lambda": None} # prey update mode
+
+# Env Settings (Expert Generation = Training)
+height = 50
+width = 50
+prey_speed = 5
+pred_speed = 5
+step_size = 0.5
+theta_dot_max = 0.5 # max turn rate
+max_turn = float(theta_dot_max * step_size) + 1e-12 # max turn per step
+
+pert_steps = 100 # perturbation steps
+init_steps = 500 # initial steps
+
+env_settings = (height, width, prey_speed, pred_speed, step_size, max_turn, pert_steps)
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
