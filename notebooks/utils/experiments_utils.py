@@ -729,7 +729,7 @@ def compute_incoming_weights(frame_metrics):
             incoming[neighbor_id] += float(weights_prey[focal_k, nbr_k])
 
     # build incoming weights dictionary
-    incoming_dict = {f"predator_{pred_self}": 0.999} # predator always visible
+    incoming_dict = {f"predator_{pred_self}": incoming[pred_self]}
     for i in prey_self:
         incoming_dict[f"prey_{i}"] = incoming[i]
 
@@ -743,15 +743,14 @@ def compute_incoming_weights(frame_metrics):
     powered_weights = powered / (powered.sum() + 1e-12)
 
     # scale prey incoming weights to [0.2, 1.0] for better visualization, if 0 fish invisible
-    prey_incoming = powered_weights[1:]
-    incoming_min = prey_incoming.min()
-    incoming_max = prey_incoming.max()
-    incoming_scaled = 0.2 + (prey_incoming - incoming_min) / (incoming_max - incoming_min) * (1.0 - 0.2) # scale to alpha range for transparency
+    incoming_min = powered_weights.min()
+    incoming_max = powered_weights.max()
+    incoming_scaled = 0.2 + (powered_weights - incoming_min) / (incoming_max - incoming_min) * (1.0 - 0.2) # scale to alpha range for transparency
 
     # build final incoming weights dictionary
-    final_dict = {f"predator_{pred_self}": 0.999}
+    final_dict = {f"predator_{pred_self}": float(incoming_scaled[0])}
     for idx, i in enumerate(prey_self):
-        final_dict[f"prey_{i}"] = float(incoming_scaled[idx])
+        final_dict[f"prey_{i}"] = float(incoming_scaled[idx + 1])
 
     return final_dict
 
@@ -801,29 +800,29 @@ def draw_attention_graph(metrics_weights, frame_idx=1, pred_img_path=None, prey_
     # compute incoming weights for transparency
     alphas = compute_incoming_weights(weights)  # to get incoming weights for transparency
 
-    for i in range(n_agents):
-        # compute rotation angle in degrees
-        angle_deg = np.degrees(directions[i])
+    # find most important prey (max alpha among preys)
+    prey_ids = [int(k.split("_")[1]) for k in alphas.keys() if k.startswith("prey_")]
+    leader_prey_id = max(prey_ids, key=lambda pid: alphas[f"prey_{pid}"])
 
-        # select base image
+    pred_key = next(k for k in alphas.keys() if k.startswith("predator_")) # get predator key
+
+    for i in range(n_agents):
+        angle_deg = np.degrees(directions[i])
         base_img = pred_image if i == 0 else prey_image
 
-        # get alpha value
-        alpha = alphas[f"predator_0"] if i == 0 else alphas[f"prey_{i}"]
+        alpha = alphas[pred_key] if i == 0 else alphas[f"prey_{i}"]
 
-        # rotate image to match direction
         rotated_img = base_img.rotate(angle_deg+180, resample=Image.BICUBIC, expand=True)
         rotated_img = np.asarray(rotated_img).copy()
 
-        # mark leader prey
-        if alpha == 1.0:
+        # mark leader prey only
+        if i != 0 and i == leader_prey_id:
             rotated_img = rotated_img.astype(float)
             rotated_img[..., 0] *= 1.8
             rotated_img[..., 1] *= 0.6
             rotated_img[..., 2] *= 0.6
             rotated_img = np.clip(rotated_img, 0, 255).astype(np.uint8)
 
-        # apply transparency
         rotated_img[:, :, 3] = (rotated_img[:, :, 3].astype(float) * alpha).astype(np.uint8)
 
         # add image to plot
@@ -887,6 +886,10 @@ def draw_predator_attention_graph(metrics_weights, frame_idx=1, pred_img_path=No
     # compute incoming weights for transparency
     alphas = compute_incoming_weights(weights)
 
+    # find most important prey (max alpha among preys)
+    prey_ids = [int(k.split("_")[1]) for k in alphas.keys() if k.startswith("prey_")]
+    leader_prey_id = max(prey_ids, key=lambda pid: alphas[f"prey_{pid}"])
+
     for i in range(n_agents):
         # compute rotation angle in degrees
         angle_deg = np.degrees(directions[i])
@@ -902,7 +905,7 @@ def draw_predator_attention_graph(metrics_weights, frame_idx=1, pred_img_path=No
         rotated_img = np.asarray(rotated_img).copy()
 
         # mark leader prey (use threshold instead of == 1.0)
-        if i != 0 and alpha >= 0.999:
+        if i != 0 and i == leader_prey_id:
             rotated_img = rotated_img.astype(float)
             rotated_img[..., 0] *= 1.8
             rotated_img[..., 1] *= 0.6
