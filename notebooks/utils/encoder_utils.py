@@ -275,8 +275,8 @@ def train_encoder(encoder, projector, aug, exp_tensor, epochs, optimizer, role="
     device = next(encoder.parameters()).device
 
     total_losses = []
-    sim_losses   = []
-    std_losses   = []
+    invar_losses   = []
+    var_losses   = []
     cov_losses   = []
 
     for epoch in range(1, epochs + 1):
@@ -310,8 +310,8 @@ def train_encoder(encoder, projector, aug, exp_tensor, epochs, optimizer, role="
 
         # store losses for visualization
         total_losses.append(loss.item())
-        sim_losses.append(logs["sim"].item())
-        std_losses.append(logs["std"].item())
+        invar_losses.append(logs["sim"].item())
+        var_losses.append(logs["std"].item())
         cov_losses.append(logs["cov"].item())
 
         # optimization step
@@ -332,9 +332,9 @@ def train_encoder(encoder, projector, aug, exp_tensor, epochs, optimizer, role="
     # plot loss components 
     epochs = list(range(1, epochs + 1))
     plt.figure(figsize=(7, 4))
-    plt.plot(epochs, sim_losses, label="sim")
-    plt.plot(epochs, std_losses, label="std")
-    plt.plot(epochs, cov_losses, label="cov")
+    plt.plot(epochs, invar_losses, label="invariance")
+    plt.plot(epochs, var_losses, label="variance")
+    plt.plot(epochs, cov_losses, label="covariance")
     plt.xlabel("epoch")
     plt.ylabel("loss value")
     plt.title(f"[{role.upper()}] VICReg loss components over training")
