@@ -16,7 +16,7 @@ References:
 Wu et al. (2025) - Adversarial imitation learning with deep attention network for swarm systems (https://doi.org/10.1007/s40747-024-01662-2)
 
 ES Clipping idea derived from:
-Liu et al (2019) - Trust Region Evolution Strategies ()
+Liu et al (2019) - Trust Region Evolution Strategies (https://doi.org/10.1609/aaai.v33i01.33014352)
 
 
 ES Structure: Wu et al. (2025) - p.7 Algorithm 2

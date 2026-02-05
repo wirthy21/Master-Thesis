@@ -5,7 +5,6 @@ from tqdm.auto import tqdm
 import matplotlib.pyplot as plt
 from geomloss import SamplesLoss
 from utils.encoder_utils import *
-from scipy.spatial import cKDTree
 
 """
 References:
