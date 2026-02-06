@@ -11,7 +11,7 @@ conda create -n GAIL python=3.10 -y
 conda activate GAIL
 ```
 
-2. Install CUDA enabled pytorch version
+2. Install CUDA enabled pytorch version (Windows + CUDA 12.6)
 ```
 pip install "torch==2.6.0+cu124" --index-url https://download.pytorch.org/whl/cu124
 pip install "torchvision==0.21.0+cu124" --index-url https://download.pytorch.org/whl/cu124
@@ -21,11 +21,5 @@ pip install "torchvision==0.21.0+cu124" --index-url https://download.pytorch.org
 ```
 pip install -r requirements.txt
 ```
-   
-
-
-## Project Describtion
-
-Add description here...
 
 
