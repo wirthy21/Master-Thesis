@@ -24,4 +24,9 @@ cd Master-Thesis
 pip install -r requirements.txt
 ```
 
+5. For data access use the following OneDrive-link:
+```
+https://1drv.ms/f/c/e86ec4f701d097f4/IgCQUyQfwzltSLD6Ojpz2aFxAbr6gZOq_PxVMbEvMYjKX18?e=aj7HeV
+```
+
 
