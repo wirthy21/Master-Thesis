@@ -20,6 +20,7 @@ git clone https://github.com/wirthy21/Master-Thesis.git
 
 4. Install requirements.
 ```
+cd Master-Thesis
 pip install -r requirements.txt
 ```
 
