@@ -17,7 +17,12 @@ pip install "torch==2.6.0+cu124" --index-url https://download.pytorch.org/whl/cu
 pip install "torchvision==0.21.0+cu124" --index-url https://download.pytorch.org/whl/cu124
 ```
 
-3. Install requirements
+3. Clone repository
+```
+git clone https://github.com/wirthy21/Master-Thesis.git
+```
+
+4. Install requirements
 ```
 pip install -r requirements.txt
 ```
