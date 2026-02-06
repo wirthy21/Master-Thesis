@@ -1,5 +1,5 @@
 ## Environment Installation
-Instruction show a step by step installation using Anaconda.
+Instruction shows a step by step installation using Anaconda Prompt.
 
 1. Create new conda environment with git
 ```
