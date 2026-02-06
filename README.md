@@ -1,7 +1,3 @@
-# Master Thesis
-
-This is my Master Thesis Repository
-
 ## Environment Installation
 Instruction show a step by step installation using Anaconda.
 
